@@ -1,4 +1,6 @@
 from kafka import KafkaConsumer
+import requests
+
 import json
 
 consumer = KafkaConsumer(
@@ -9,5 +11,6 @@ consumer = KafkaConsumer(
 )
 
 for message in consumer:
-    print(message.value)
-
+    # bug: it's inserting, not upserting: wrong method
+    r = requests.put('http://localhost:9200/line_status/_doc', json=message.value)
+    print(f"Status Code: {r.status_code}, Response: {r.json()}")

@@ -1,5 +1,6 @@
 __pycache__/
 .env
 playground.py
+test_opensearch.py
 *.pyc
 .DS_Store
