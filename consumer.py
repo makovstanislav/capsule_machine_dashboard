@@ -10,18 +10,21 @@ consumer = KafkaConsumer(
     auto_offset_reset="latest"
 )
 
-for message in consumer:
+def save_to_opensearch(event):
     # Configuration
     index_name = "line_status"
-    doc_id = message.value["line_id"]
+    doc_id = event["line_id"]
     url = f"http://localhost:9200/{index_name}/_update/{doc_id}"
     headers = {"Content-Type": "application/json"}
 
     # Upsert
     payload = {
-        "doc": message.value,
+        "doc": event,
         "doc_as_upsert": True
     }
-
+    
     response = requests.post(url, headers=headers, data=json.dumps(payload))
     print(response.json())
+
+for message in consumer:
+    save_to_opensearch(message.value)
