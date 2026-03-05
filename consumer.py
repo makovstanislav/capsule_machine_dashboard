@@ -26,9 +26,13 @@ def save_to_opensearch(event):
 
 def validate(event):
     event_start_time = event['state_start_time']
+    event_time = event['event_time']
     curr_time = time.time()
     if event_start_time > curr_time:
-        print(f"WARNING: event start time is {event_start_time} > {curr_time}")
+        print(f"WARNING: event_start_time is {event_start_time} > curr_time {curr_time}")
+        return False
+    elif event_time < event_start_time:
+        print(f"WARNING: event_time is {event_time} BEFORE event_start_time {event_start_time}")
         return False
     else:
         return True
