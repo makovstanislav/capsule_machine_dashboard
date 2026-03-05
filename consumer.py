@@ -8,6 +8,27 @@ consumer = KafkaConsumer(
     auto_offset_reset="latest"
 )
 
+last_event_time = {} # data will be lost after restart
+
+def validate(event):
+    event_start_time = event['state_start_time']
+    event_time = event['event_time']
+    curr_time = time.time()
+    if event_start_time > curr_time:
+        print(f"WARNING: event_start_time {event_start_time} > curr_time {curr_time}")
+        return False
+    elif event_time < event_start_time:
+        print(f"WARNING: event_time {event_time} is BEFORE event_start_time {event_start_time}")
+        return False
+    elif event["line_id"] in last_event_time:
+        if event_time < last_event_time[event["line_id"]]:
+            print(f"WARNING: event_time {event_time} is OLDER than last_event_time {last_event_time[event["line_id"]]}")
+            return False
+        else:
+            return True
+    else:
+        return True
+
 def save_to_opensearch(event):
     # Configuration
     index_name = "line_status"
@@ -23,20 +44,8 @@ def save_to_opensearch(event):
     
     response = requests.post(url, headers=headers, data=json.dumps(payload))
     print(response.json())
-
-def validate(event):
-    event_start_time = event['state_start_time']
-    event_time = event['event_time']
-    curr_time = time.time()
-    if event_start_time > curr_time:
-        print(f"WARNING: event_start_time is {event_start_time} > curr_time {curr_time}")
-        return False
-    elif event_time < event_start_time:
-        print(f"WARNING: event_time is {event_time} BEFORE event_start_time {event_start_time}")
-        return False
-    else:
-        return True
-        
+    
 for message in consumer:
     if validate(message.value):
         save_to_opensearch(message.value)
+        last_event_time[message.value["line_id"]] = message.value["event_time"]
