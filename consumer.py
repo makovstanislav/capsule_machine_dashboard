@@ -1,7 +1,5 @@
 from kafka import KafkaConsumer
-import requests
-
-import json
+import requests, json, time
 
 consumer = KafkaConsumer(
     "line_events",
@@ -26,5 +24,15 @@ def save_to_opensearch(event):
     response = requests.post(url, headers=headers, data=json.dumps(payload))
     print(response.json())
 
+def validate(event):
+    event_start_time = event['state_start_time']
+    curr_time = time.time()
+    if event_start_time > curr_time:
+        print(f"WARNING: event start time is {event_start_time} > {curr_time}")
+        return False
+    else:
+        return True
+        
 for message in consumer:
-    save_to_opensearch(message.value)
+    if validate(message.value):
+        save_to_opensearch(message.value)
