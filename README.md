@@ -12,11 +12,15 @@ graph LR
     producer.py --> Kafka;
     Kafka --> consumer.py;
     consumer.py --> OpenSearch;
+    OpenSearch --> Dashboards;
 ```
 ### Stack 
 Python, Kafka, OpenSearch, Docker 
 
 > This is a capstone project – the code is written manually. AI is used for review only.
+
+### Screenshots
+<img src="docs/dashboard.png" width="700">
 
 ## How to run
 **Pre-conditions**
