@@ -55,6 +55,7 @@ while True:
             
             line_id = message.value["line_id"]
             
+            message.value["time_in_state"] = message.value["event_time"] - message.value["state_start_time"]
             save_to_opensearch(message.value)
             
             last_event_time[line_id] = message.value["event_time"]
@@ -67,6 +68,7 @@ while True:
                     "line_id" : key,
                     "state" : "STALE",
                     "event_time": time.time(), 
-                    "state_start_time": last_seen[key]
+                    "state_start_time": last_seen[key],
+                    "time_in_state": time.time() - last_seen[key]
                 }
                 save_to_opensearch(stale)
