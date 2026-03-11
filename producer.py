@@ -1,11 +1,13 @@
-import random, time
+import random, time, uuid
 import json
 from kafka import KafkaProducer
 
 curr_state = "DOWN"
 data = {
+        "event_id": str(uuid.uuid4()),
+        "event_type": "line_state",
         "line_id": "line_1", 
-        "state": curr_state, 
+        "state": curr_state,
         "event_time": time.time(), 
         "state_start_time": 1700000000.0
     }
@@ -24,10 +26,12 @@ while True:
         
         curr_state = new_state
         
+        data["event_id"] = str(uuid.uuid4())
+        data["event_type"]= "line_state"
         data["state"] = new_state
         data["state_start_time"] = new_state_start_time
         data["event_time"] = time.time()
-
+        
         producer.send('line_events', value=data)
         producer.flush()
         
