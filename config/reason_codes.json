@@ -1,0 +1,7 @@
+[
+  {"code": "MECHANICAL_FAILURE", "category": "mechanical"},
+  {"code": "MATERIAL_JAM", "category": "material"},
+  {"code": "ELECTRICAL_FAULT", "category": "electrical"},
+  {"code": "CHANGEOVER", "category": "planned"},
+  {"code": "CLEANING", "category": "planned"}
+]

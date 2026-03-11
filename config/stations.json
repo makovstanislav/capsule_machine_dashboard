@@ -1,0 +1,6 @@
+[
+  {"station_id": "FILLER", "name": "Capsule Filler", "order": 1},
+  {"station_id": "SEALER", "name": "Capsule Sealer", "order": 2},
+  {"station_id": "WEIGHER", "name": "Check Weigher", "order": 3},
+  {"station_id": "PACKER", "name": "Box Packer", "order": 4}
+]
