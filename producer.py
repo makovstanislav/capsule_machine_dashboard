@@ -1,12 +1,21 @@
 import random, time, uuid, json
 from kafka import KafkaProducer
 
+with open("config/reason_codes.json") as f: 
+    reason_codes = json.load(f)
+
+with open("config/line_spec.json") as f: 
+    line_spec = json.load(f)
+    
+with open("config/stations.json") as f: 
+    stations = json.load(f)
+    
 curr_state = "DOWN"
 
 data = {
         "event_id": str(uuid.uuid4()),
         "event_type": "line_state",
-        "line_id": "line_1", 
+        "line_id": line_spec["line_id"], 
         "state": curr_state,
         "event_time": time.time(), 
         "state_start_time": 1700000000.0
