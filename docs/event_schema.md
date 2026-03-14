@@ -11,7 +11,7 @@ sent every 5 seconds
 |state|string|RUN / IDLE / DOWN / STALE (if no message for 30 sec)|
 |state_start_time|float|Ex: 1773493218.3043132|
 |event_time|float|Ex: 1773493218.304907|
-|reason_code|string|only when DOWN, null otherwise|
+|reason_code|string|only when DOWN, null otherwise. E.g. "MECHANICAL_FAILURE", "CLEANING", "ELECTRICAL_FAULT"|
 |time_in_state|float|if no message for 30 sec|
 
 #### `production`
