@@ -18,8 +18,18 @@ data = {
         "line_id": line_spec["line_id"], 
         "state": curr_state,
         "event_time": time.time(), 
-        "state_start_time": 1700000000.0
+        "state_start_time": 1700000000.0,
+        "reason_code": None
     }
+
+unit_counter = 0
+batch_counter = 0
+
+batch_id = "batch_001"
+batch_number = 1
+
+material_lot_id = "lot_001"
+material_lot_number = 1
 
 producer = KafkaProducer(
     bootstrap_servers='localhost:9092',
@@ -31,6 +41,7 @@ while True:
     new_state = random.choice(states)
     new_state_start_time = time.time()
     
+    # Check whether the state has been changed
     if curr_state != new_state:
         
         curr_state = new_state
@@ -41,6 +52,11 @@ while True:
         data["state_start_time"] = new_state_start_time
         data["event_time"] = time.time()
         
+        if curr_state == "DOWN":
+            data["reason_code"] = random.choice(reason_codes)["code"]
+        else:
+            data["reason_code"] = None
+            
         producer.send('line_events', value=data)
         producer.flush()
         
@@ -50,5 +66,19 @@ while True:
         data["event_time"] = time.time()
         producer.send('line_events', value=data)
         producer.flush()
+    
+    # Update counters
+    if new_state == 'RUN':
+        new_units = random.randint(3, 8)
+        unit_counter += new_units
+        batch_counter += new_units
         
+        if batch_counter >= 50:
+            batch_number += 1
+            batch_id = f"batch_{batch_number:03d}"
+            batch_counter = 0
+            if batch_number % 2 == 1:
+                material_lot_number += 1
+                material_lot_id = f"lot_{material_lot_number:03d}"
+
     time.sleep(5)
