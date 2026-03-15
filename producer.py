@@ -1,6 +1,7 @@
 import random, time, uuid, json
 from kafka import KafkaProducer
 
+# Import configs
 with open("config/reason_codes.json") as f: 
     reason_codes = json.load(f)
 
@@ -9,8 +10,17 @@ with open("config/line_spec.json") as f:
     
 with open("config/stations.json") as f: 
     stations = json.load(f)
-    
+
 curr_state = "DOWN"
+
+unit_counter = 0
+batch_counter = 0
+
+batch_id = "batch_001"
+batch_number = 1
+
+material_lot_id = "lot_001"
+material_lot_number = 1
 
 data = {
         "event_id": str(uuid.uuid4()),
@@ -22,14 +32,20 @@ data = {
         "reason_code": None
     }
 
-unit_counter = 0
-batch_counter = 0
-
-batch_id = "batch_001"
-batch_number = 1
-
-material_lot_id = "lot_001"
-material_lot_number = 1
+def generate_production_event(new_units):
+    production_event = {
+        "event_id": str(uuid.uuid4()),
+        "event_type": "production",
+        "line_id": line_spec["line_id"],
+        "station_id": random.choice(stations)["station_id"],
+        "good_count_inc": new_units,
+        "cycles_count_inc": 1,
+        "batch_id": batch_id,
+        "event_time": time.time()
+    }
+    producer.send('line_events', value=production_event)
+    producer.flush()
+    print(f"Production event sent: {production_event}")
 
 producer = KafkaProducer(
     bootstrap_servers='localhost:9092',
@@ -80,5 +96,7 @@ while True:
             if batch_number % 2 == 1:
                 material_lot_number += 1
                 material_lot_id = f"lot_{material_lot_number:03d}"
+        
+        generate_production_event(new_units)
 
     time.sleep(5)
