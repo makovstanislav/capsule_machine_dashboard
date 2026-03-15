@@ -11,6 +11,9 @@ with open("config/line_spec.json") as f:
 with open("config/stations.json") as f: 
     stations = json.load(f)
 
+with open("config/reject_reasons.json") as f: 
+    reject_reasons = json.load(f)
+
 curr_state = "DOWN"
 
 unit_counter = 0
@@ -47,6 +50,22 @@ def generate_production_event(new_units):
     producer.flush()
     print(f"Production event sent: {production_event}")
 
+def generate_reject_event():
+    reject_event = {
+        "event_id": str(uuid.uuid4()),
+        "event_type": "reject",
+        "line_id": line_spec["line_id"],
+        "station_id": random.choice(stations)["station_id"],
+        "unit_id": f"unit_{unit_counter:06d}",
+        "reject_reason": random.choice(reject_reasons),
+        "material_lot_id": material_lot_id,
+        "batch_id": batch_id,
+        "event_time": time.time()
+    }
+    producer.send('line_events', value=reject_event)
+    producer.flush()
+    print(f"Rejection event sent: {reject_event}")
+    
 producer = KafkaProducer(
     bootstrap_servers='localhost:9092',
     value_serializer=lambda v: json.dumps(v).encode('utf-8')
@@ -98,5 +117,7 @@ while True:
                 material_lot_id = f"lot_{material_lot_number:03d}"
         
         generate_production_event(new_units)
+        if random.random() < 0.05:
+            generate_reject_event()
 
     time.sleep(5)
