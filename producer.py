@@ -66,6 +66,42 @@ def generate_reject_event():
     producer.flush()
     print(f"Rejection event sent: {reject_event}")
     
+def generate_qc_events(new_units):
+    
+    for i in range(new_units):
+        unit_id = f"unit_{unit_counter - new_units + i:06d}"
+        checkweigher_event = {
+            "event_id": str(uuid.uuid4()),
+            "event_type": "qc_inspection",
+            "line_id": line_spec["line_id"],
+            "station_id": "WEIGHER", 
+            "unit_id": unit_id,
+            "inspection_type":"CHECKWEIGHER", 
+            "result" : "PASS" if random.random() < 0.95 else "FAIL", 
+            "batch_id": batch_id,
+            "event_time": time.time()
+        }
+    
+        vision_event = {
+            "event_id": str(uuid.uuid4()),
+            "event_type": "qc_inspection",
+            "line_id": line_spec["line_id"],
+            "station_id": "SEALER", 
+            "unit_id": unit_id,
+            "inspection_type":"VISION", 
+            "result" : "PASS" if random.random() < 0.95 else "FAIL", 
+            "batch_id": batch_id,
+            "event_time": time.time()
+        }
+    
+        producer.send('line_events', value=checkweigher_event)
+        producer.flush()
+        print(f"Checkweigher event sent: {checkweigher_event}")
+        
+        producer.send('line_events', value=vision_event)
+        producer.flush()
+        print(f"Vision event sent: {vision_event}")
+    
 producer = KafkaProducer(
     bootstrap_servers='localhost:9092',
     value_serializer=lambda v: json.dumps(v).encode('utf-8')
@@ -81,6 +117,7 @@ while True:
         
         curr_state = new_state
         
+        # Line state events
         data["event_id"] = str(uuid.uuid4())
         data["event_type"] = "line_state"
         data["state"] = new_state
@@ -102,12 +139,12 @@ while True:
         producer.send('line_events', value=data)
         producer.flush()
     
-    # Update counters
     if new_state == 'RUN':
         new_units = random.randint(3, 8)
+        
+        # Update counters
         unit_counter += new_units
         batch_counter += new_units
-        
         if batch_counter >= 50:
             batch_number += 1
             batch_id = f"batch_{batch_number:03d}"
@@ -115,9 +152,15 @@ while True:
             if batch_number % 2 == 1:
                 material_lot_number += 1
                 material_lot_id = f"lot_{material_lot_number:03d}"
-        
+                
+        # Production events
         generate_production_event(new_units)
+        
+        # Rejection events
         if random.random() < 0.05:
             generate_reject_event()
-
+            
+        # Quality control events
+        generate_qc_events(new_units)
+            
     time.sleep(5)
