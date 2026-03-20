@@ -48,19 +48,42 @@ def save_to_opensearch(event):
     response = requests.post(url, headers=headers, data=json.dumps(payload))
     print(response.json())
     
+def handle_line_state(event, event_type):
+    if validate(event):
+        
+        line_id = event["line_id"]
+        
+        event["time_in_state"] = event["event_time"] - event["state_start_time"]
+        save_to_opensearch(event)
+        
+        last_event_time[line_id] = event["event_time"]
+        last_seen[line_id] = time.time()
+        print(f"[{event_type}] {event}")
+
+def handle_production(event, event_type):
+    print(f"[{event_type}] {event}")
+    
+def handle_reject(event, event_type):
+    print(f"[{event_type}] {event}")
+    
+def handle_qc(event, event_type):
+    print(f"[{event_type}] {event}")
+
 while True:
     for message in consumer:
-        if validate(message.value):
-            print(message.value)
-            
-            line_id = message.value["line_id"]
-            
-            message.value["time_in_state"] = message.value["event_time"] - message.value["state_start_time"]
-            save_to_opensearch(message.value)
-            
-            last_event_time[line_id] = message.value["event_time"]
-            last_seen[line_id] = time.time()
-    
+        event = message.value
+        event_type = event.get("event_type", "unknown")
+        if event_type == "line_state":
+            handle_line_state(event, event_type)
+        elif event_type == "production":
+            handle_production(event, event_type)
+        elif event_type == "reject":
+            handle_reject(event, event_type)
+        elif event_type == "qc_inspection":
+            handle_qc(event, event_type)
+        else:
+            print(f"Unknown event_type: {event_type}")
+        
     if last_seen:
         for key in last_seen:
             if time.time() - last_seen[key] > 30:
