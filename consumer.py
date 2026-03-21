@@ -13,6 +13,7 @@ last_event_time = {} # clear after restart
 # last time received message per line
 last_seen = {}
 
+# Validates line_state event only
 def validate(event):
     event_start_time = event['state_start_time']
     event_time = event['event_time']
@@ -32,13 +33,12 @@ def validate(event):
     else:
         return True
 
-def save_to_opensearch(event):
+def save_to_opensearch(event, index_name):
     # Configuration
-    index_name = "line_status"
     doc_id = event["line_id"]
     url = f"http://localhost:9200/{index_name}/_update/{doc_id}"
     headers = {"Content-Type": "application/json"}
-
+    
     # Body
     payload = {
         "doc": event,
@@ -48,26 +48,33 @@ def save_to_opensearch(event):
     response = requests.post(url, headers=headers, data=json.dumps(payload))
     print(response.json())
     
+def append_to_opensearch(event, index_name):
+    # Configuration
+    doc_id = event["event_id"]
+    url = f"http://localhost:9200/{index_name}/_doc/{doc_id}"
+    response = requests.put(url, json=event)
+    print(response.json())
+    
 def handle_line_state(event, event_type):
     if validate(event):
         
         line_id = event["line_id"]
         
         event["time_in_state"] = event["event_time"] - event["state_start_time"]
-        save_to_opensearch(event)
+        save_to_opensearch(event, "line_status")
         
         last_event_time[line_id] = event["event_time"]
         last_seen[line_id] = time.time()
         print(f"[{event_type}] {event}")
 
 def handle_production(event, event_type):
-    print(f"[{event_type}] {event}")
-    
+        append_to_opensearch(event, "production_events")
+
 def handle_reject(event, event_type):
-    print(f"[{event_type}] {event}")
+        append_to_opensearch(event, "reject_events")
     
 def handle_qc(event, event_type):
-    print(f"[{event_type}] {event}")
+        append_to_opensearch(event, "qc_events")
 
 while True:
     for message in consumer:
@@ -94,4 +101,4 @@ while True:
                     "state_start_time": last_seen[key],
                     "time_in_state": time.time() - last_seen[key]
                 }
-                save_to_opensearch(stale)
+                save_to_opensearch(stale, "line_status")
