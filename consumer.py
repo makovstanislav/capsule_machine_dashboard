@@ -76,10 +76,14 @@ def handle_reject(event, event_type):
 def handle_qc(event, event_type):
         append_to_opensearch(event, "qc_events")
 
+seen_ids = set()
+
+
 while True:
     for message in consumer:
         event = message.value
         event_type = event.get("event_type", "unknown")
+        if event["event_id"] in seen_ids: continue
         if event_type == "line_state":
             handle_line_state(event, event_type)
         elif event_type == "production":
@@ -90,6 +94,10 @@ while True:
             handle_qc(event, event_type)
         else:
             print(f"Unknown event_type: {event_type}")
+        seen_ids.add(event["event_id"])
+        # Memory protection
+        if len(seen_ids) > 1000:
+            seen_ids.clear()
         
     if last_seen:
         for key in last_seen:
