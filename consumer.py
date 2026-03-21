@@ -20,18 +20,18 @@ def validate(event):
     curr_time = time.time()
     if event_start_time > curr_time:
         print(f"WARNING: event_start_time > curr_time")
-        return False
+        return False, "WARNING: event_start_time > curr_time"
     elif event_time < event_start_time:
         print(f"WARNING: event_time is BEFORE event_start_time")
-        return False
+        return False, "WARNING: event_time is BEFORE event_start_time"
     elif event["line_id"] in last_event_time:
         if event_time < last_event_time[event["line_id"]]:
             print(f"WARNING: event_time is OLDER than last_event_time")
-            return False
+            return False, "WARNING: event_time is OLDER than last_event_time"
         else:
-            return True
+            return True, None
     else:
-        return True
+        return True, None
 
 def save_to_opensearch(event, index_name):
     # Configuration
@@ -56,7 +56,8 @@ def append_to_opensearch(event, index_name):
     print(response.json())
     
 def handle_line_state(event, event_type):
-    if validate(event):
+    is_valid, reason = validate(event)
+    if is_valid:
         
         line_id = event["line_id"]
         
@@ -66,6 +67,8 @@ def handle_line_state(event, event_type):
         last_event_time[line_id] = event["event_time"]
         last_seen[line_id] = time.time()
         print(f"[{event_type}] {event}")
+    else:
+        send_to_dlq(event, reason)
 
 def handle_production(event, event_type):
         append_to_opensearch(event, "production_events")
@@ -76,8 +79,12 @@ def handle_reject(event, event_type):
 def handle_qc(event, event_type):
         append_to_opensearch(event, "qc_events")
 
+def send_to_dlq(event, reason):
+    event['rejection_reason'] = reason
+    event['rejected_at'] = time.time()
+    append_to_opensearch(event, "dead_letter_queue")
+    
 seen_ids = set()
-
 
 while True:
     for message in consumer:
