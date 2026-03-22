@@ -12,6 +12,7 @@ consumer = KafkaConsumer(
 last_event_time = {} # clear after restart
 # last time received message per line
 last_seen = {}
+total_good_units = {}
 
 # Validates line_state event only
 def validate(event):
@@ -72,7 +73,12 @@ def handle_line_state(event, event_type):
 
 def handle_production(event, event_type):
         append_to_opensearch(event, "production_events")
-
+        if event["line_id"] in total_good_units:
+            total_good_units[event["line_id"]] += event["good_count_inc"]
+        else:
+            total_good_units[event["line_id"]] = event["good_count_inc"]
+        print(f"{event["line_id"]}: {total_good_units[event["line_id"]]} total units")
+        
 def handle_reject(event, event_type):
         append_to_opensearch(event, "reject_events")
     

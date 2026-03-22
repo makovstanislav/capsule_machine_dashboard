@@ -126,7 +126,7 @@ while True:
         
         if curr_state == "DOWN":
             data["reason_code"] = random.choice(reason_codes)["code"]
-        else:
+        else: 
             data["reason_code"] = None
             
         producer.send('line_events', value=data)
