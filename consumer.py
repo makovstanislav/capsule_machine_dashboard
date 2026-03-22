@@ -13,6 +13,7 @@ last_event_time = {} # clear after restart
 # last time received message per line
 last_seen = {}
 total_good_units = {}
+cycles_count_inc = {}
 
 # Validates line_state event only
 def validate(event):
@@ -72,12 +73,25 @@ def handle_line_state(event, event_type):
         send_to_dlq(event, reason)
 
 def handle_production(event, event_type):
-        append_to_opensearch(event, "production_events")
         if event["line_id"] in total_good_units:
             total_good_units[event["line_id"]] += event["good_count_inc"]
         else:
             total_good_units[event["line_id"]] = event["good_count_inc"]
+    
+        if event["line_id"] in cycles_count_inc:
+            cycles_count_inc[event["line_id"]] += 1
+        else:
+            cycles_count_inc[event["line_id"]] = 1
+
         print(f"{event["line_id"]}: {total_good_units[event["line_id"]]} total units")
+        append_to_opensearch(event, "production_events")
+        summary_doc = {
+            "line_id": event["line_id"],
+            "total_good_units": total_good_units[event["line_id"]],
+            "total_cycles": cycles_count_inc[event["line_id"]],
+            "last_updated": time.time()
+        }
+        save_to_opensearch(summary_doc, "production_summary")
         
 def handle_reject(event, event_type):
         append_to_opensearch(event, "reject_events")
