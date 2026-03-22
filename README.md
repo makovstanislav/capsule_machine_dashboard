@@ -44,7 +44,3 @@ Python, Kafka, OpenSearch, Docker
 2. Rejects events with `event_time` < `state_start_time` (impossible time-in-state).
 3. Rejects events that arrive late out-of-order – ensures correct order
 4. Sets the state as STALE when producer doesn't send data for 30s – prevents false confidence.
-
-
-
-
