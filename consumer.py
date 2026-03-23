@@ -1,5 +1,5 @@
 from kafka import KafkaConsumer
-import requests, json, time
+import requests, json, time, uuid
 
 consumer = KafkaConsumer(
     "line_events",
@@ -14,6 +14,7 @@ last_event_time = {} # clear after restart
 last_seen = {}
 total_good_units = {}
 cycles_count_inc = {}
+previous_state = {}
 
 # Validates line_state event only
 def validate(event):
@@ -61,6 +62,7 @@ def handle_line_state(event, event_type):
     is_valid, reason = validate(event)
     if is_valid:
         
+        # Save to line_status
         line_id = event["line_id"]
         
         event["time_in_state"] = event["event_time"] - event["state_start_time"]
@@ -69,6 +71,32 @@ def handle_line_state(event, event_type):
         last_event_time[line_id] = event["event_time"]
         last_seen[line_id] = time.time()
         print(f"[{event_type}] {event}")
+        
+        # Save to state_intervals
+        if previous_state: 
+            if event["state"] != previous_state["state"]:
+                duration = (event["event_time"] - previous_state["start_time"])
+                interval = {
+                    "event_id": str(uuid.uuid4()),
+                    "line_id": line_id,
+                    "state": previous_state["state"],
+                    "start_time": previous_state["start_time"],
+                    "end_time": event["event_time"],
+                    "duration_seconds": duration,
+                    "duration_minutes": duration / 60,
+                    "reason_code": previous_state["reason_code"]
+                }
+                append_to_opensearch(interval, "state_intervals")
+                # Update previous state
+                previous_state["state"] = event["state"]
+                previous_state["start_time"] = event["state_start_time"]
+                previous_state["reason_code"] = event["reason_code"]
+        else:
+            # Pre-create previous state
+            previous_state["line_id"] = line_id
+            previous_state["state"] = event["state"]
+            previous_state["start_time"] = event["event_time"]
+            previous_state["reason_code"] = event["reason_code"]
     else:
         send_to_dlq(event, reason)
 
