@@ -21,6 +21,7 @@ Python, Kafka, OpenSearch, Docker
 
 ### Screenshots
 <img src="docs/dashboard.png" width="700"><br>
+<img src="docs/dashboard_2.png" width="700">
 
 ## How to run
 **Pre-conditions**
