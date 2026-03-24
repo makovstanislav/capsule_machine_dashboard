@@ -20,7 +20,7 @@ Python, Kafka, OpenSearch, Docker
 > This is a capstone project – the code is written manually. AI is used for review only.
 
 ### Screenshots
-<img src="docs/dashboard.png" width="700">
+<img src="docs/dashboard.png" width="700"><br>
 
 ## How to run
 **Pre-conditions**
