@@ -15,6 +15,9 @@ last_seen = {}
 total_good_units = {}
 cycles_count_inc = {}
 previous_state = {}
+with open("config/reason_codes.json") as f: 
+    reason_codes = json.load(f)
+valid_codes = {r["code"] for r in reason_codes}
 
 # Validates line_state event only
 def validate(event):
@@ -86,7 +89,16 @@ def handle_line_state(event, event_type):
                     "duration_minutes": duration / 60,
                     "reason_code": previous_state["reason_code"]
                 }
+                # Validation of reason codes vs config
+                is_down = interval["state"] == "DOWN"
+                invalid_code = interval["reason_code"] not in valid_codes
+
+                if is_down and invalid_code:
+                    interval["reason_code"] = "UNKNOWN_REASON"
+                
+                # Save to OpenSearch
                 append_to_opensearch(interval, "state_intervals")
+                
                 # Update previous state
                 previous_state["state"] = event["state"]
                 previous_state["start_time"] = event["state_start_time"]
@@ -97,6 +109,13 @@ def handle_line_state(event, event_type):
             previous_state["state"] = event["state"]
             previous_state["start_time"] = event["event_time"]
             previous_state["reason_code"] = event["reason_code"]
+            
+            # Validation of reason codes vs config
+            is_down = previous_state["state"] == "DOWN"
+            invalid_code = previous_state["reason_code"] not in valid_codes
+          
+            if is_down and invalid_code:
+                    previous_state["reason_code"] = "UNKNOWN_REASON"
     else:
         send_to_dlq(event, reason)
 
