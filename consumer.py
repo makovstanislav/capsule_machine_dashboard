@@ -142,17 +142,26 @@ def handle_production(event, event_type):
         save_to_opensearch(summary_doc, "production_summary")
         
 def handle_reject(event, event_type):
-    if event["line_id"] in total_rejects:
-        total_rejects[event["line_id"]] += 1
+    line_id = event["line_id"]
+    if line_id in total_rejects:
+        total_rejects[line_id] += 1
     else:
-        total_rejects[event["line_id"]] = 1
+        total_rejects[line_id] = 1
     
-    reject_rate = round((total_rejects[event["line_id"]] / (total_good_units.get(event["line_id"], 0) + total_rejects[event["line_id"]]) * 100), 1)
-    if total_good_units.get(event["line_id"], 0) + total_rejects[event["line_id"]] == 0:
+    reject_rate = round((total_rejects[line_id] / (total_good_units.get(line_id, 0) + total_rejects[line_id]) * 100), 1)
+    if total_good_units.get(line_id, 0) + total_rejects[line_id] == 0:
         reject_rate = 0
     
-    print(f"{total_rejects[event["line_id"]]} : reject rate {reject_rate} %")
+    print(f"{total_rejects[line_id]} : reject rate {reject_rate} %")
     append_to_opensearch(event, "reject_events")
+    reject_summary = {
+        "line_id": line_id,
+        "total_rejects": total_rejects[line_id],
+        "total_good_units": total_good_units.get(line_id, 0),
+        "reject_rate": reject_rate,
+        "last_updated": time.time()
+    }
+    save_to_opensearch(reject_summary, "reject_summary")
 
 def handle_qc(event, event_type):
         append_to_opensearch(event, "qc_events")
