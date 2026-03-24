@@ -18,6 +18,7 @@ previous_state = {}
 with open("config/reason_codes.json") as f: 
     reason_codes = json.load(f)
 valid_codes = {r["code"] for r in reason_codes}
+total_rejects = {}
 
 # Validates line_state event only
 def validate(event):
@@ -141,8 +142,18 @@ def handle_production(event, event_type):
         save_to_opensearch(summary_doc, "production_summary")
         
 def handle_reject(event, event_type):
-        append_to_opensearch(event, "reject_events")
+    if event["line_id"] in total_rejects:
+        total_rejects[event["line_id"]] += 1
+    else:
+        total_rejects[event["line_id"]] = 1
     
+    reject_rate = round((total_rejects[event["line_id"]] / (total_good_units.get(event["line_id"], 0) + total_rejects[event["line_id"]]) * 100), 1)
+    if total_good_units.get(event["line_id"], 0) + total_rejects[event["line_id"]] == 0:
+        reject_rate = 0
+    
+    print(f"{total_rejects[event["line_id"]]} : reject rate {reject_rate} %")
+    append_to_opensearch(event, "reject_events")
+
 def handle_qc(event, event_type):
         append_to_opensearch(event, "qc_events")
 
