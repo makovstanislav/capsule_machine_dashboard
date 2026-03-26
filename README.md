@@ -1,13 +1,7 @@
-# Real-time coffee capsule machine dashboard
-
-### What it does
-1. A dashboard with real-time information about a machine that is filling coffee capsules. 
-2. End user is a human operator at a factory. 
-3. The dashboard displays the line's status, number of units produced, throughput deviations and other indicators. 
+System monitors a coffee capsule filling machine and displays real-time data on a dashboard. The end user is a factory operator. Data engineer capstone project.
 
 ### Architecture
-System simulates a stream of data, passes it through Kafka, validates the data and saves it to OpenSearch for storage and visualization.<br>
-Dead Letter Queue, dedup / idempotency. 
+System simulates a stream of data, passes it through Kafka, validates and saves to OpenSearch. Visualization in OpenSearch Dashboards. One topic used.<br>
 
 ```mermaid
 graph LR
@@ -19,19 +13,16 @@ graph LR
 ### Stack 
 Python, Kafka, OpenSearch, Docker 
 
-> This is a capstone project – the code is written manually. AI is used for review only.
-
 ### Dashboard
 <img src="docs/dashboard.png" width="700"><br>
-<img src="docs/dashboard_2.png" width="700">
 
 ### Metrics implemented
-1. Units produced – Total
-2. Units produced – Trend
-3. Downtime (minutes) – Trend
-4. Downtime – Pareto
-5. Time-in-State 
-6. Line status (RUN/IDLE/DOWN/STALE)
+1. Line status (RUN/IDLE/DOWN/STALE)
+2. Units produced – Total
+3. Units produced – Trend
+4. Downtime (minutes) – Trend
+5. Downtime – Pareto
+6. Time-in-State  
 7. Reject rate
 
 ## How to run
@@ -49,6 +40,7 @@ Python, Kafka, OpenSearch, Docker
 **Verify**
 1. Open http://localhost:9200/line_status/_search in a browser 
 2. You want to see a dictionary containing the field “state” with the value `RUN`, `IDLE` or `DOWN`
+3. For exploring a particular index: get a list `curl -X GET "localhost:9200/_cat/indices?v"` and navigate to http://localhost:9200/{index_name}/_search 
 
 ## Data quality gates
 **Line status**
