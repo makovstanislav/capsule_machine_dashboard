@@ -1,166 +1,134 @@
 import random, time, uuid, json
 from kafka import KafkaProducer
 
-# Import configs
-with open("config/reason_codes.json") as f: 
+# Config
+with open("config/reason_codes.json") as f:
     reason_codes = json.load(f)
-
-with open("config/line_spec.json") as f: 
+with open("config/line_spec.json") as f:
     line_spec = json.load(f)
-    
-with open("config/stations.json") as f: 
+with open("config/stations.json") as f:
     stations = json.load(f)
-
-with open("config/reject_reasons.json") as f: 
+with open("config/reject_reasons.json") as f:
     reject_reasons = json.load(f)
 
+LINE_ID = line_spec["line_id"]
+STATION_IDS = [s["station_id"] for s in stations]
+REASON_CODES = [r["code"] for r in reason_codes]
+
+# State
 curr_state = "DOWN"
+state_start_time = time.time()
 
 unit_counter = 0
 batch_counter = 0
-
-batch_id = "batch_001"
 batch_number = 1
-
-material_lot_id = "lot_001"
+batch_id = "batch_001"
 material_lot_number = 1
+material_lot_id = "lot_001"
 
-data = {
+# Kafka
+producer = KafkaProducer(
+    bootstrap_servers="localhost:9092",
+    value_serializer=lambda v: json.dumps(v).encode("utf-8"),
+)
+TOPIC = "line_events"
+
+# Helpers
+def send(event):
+    # Sending event to Kafka
+    producer.send(TOPIC, value=event)
+    producer.flush()
+    print(f"[{event['event_type']}] {event.get('state', event.get('unit_id', ''))}")
+
+def base_event(event_type):
+    # Shared fields by every event
+    return {
         "event_id": str(uuid.uuid4()),
-        "event_type": "line_state",
-        "line_id": line_spec["line_id"], 
-        "state": curr_state,
-        "event_time": time.time(), 
-        "state_start_time": 1700000000.0,
-        "reason_code": None
+        "event_type": event_type,
+        "line_id": LINE_ID,
+        "event_time": time.time(),
     }
 
+# Event producers
+def generate_line_state_event():
+    event = base_event("line_state")
+    event.update({
+        "state": curr_state,
+        "state_start_time": state_start_time,
+        "reason_code": random.choice(REASON_CODES) if curr_state == "DOWN" else None,
+    })
+    send(event)
+
 def generate_production_event(new_units):
-    production_event = {
-        "event_id": str(uuid.uuid4()),
-        "event_type": "production",
-        "line_id": line_spec["line_id"],
-        "station_id": random.choice(stations)["station_id"],
+    event = base_event("production")
+    event.update({
+        "station_id": random.choice(STATION_IDS),
         "good_count_inc": new_units,
         "cycles_count_inc": 1,
         "batch_id": batch_id,
-        "event_time": time.time()
-    }
-    producer.send('line_events', value=production_event)
-    producer.flush()
-    print(f"Production event sent: {production_event}")
+    })
+    send(event)
 
 def generate_reject_event():
-    reject_event = {
-        "event_id": str(uuid.uuid4()),
-        "event_type": "reject",
-        "line_id": line_spec["line_id"],
-        "station_id": random.choice(stations)["station_id"],
+    event = base_event("reject")
+    event.update({
+        "station_id": random.choice(STATION_IDS),
         "unit_id": f"unit_{unit_counter:06d}",
         "reject_reason": random.choice(reject_reasons),
         "material_lot_id": material_lot_id,
         "batch_id": batch_id,
-        "event_time": time.time()
-    }
-    producer.send('line_events', value=reject_event)
-    producer.flush()
-    print(f"Rejection event sent: {reject_event}")
-    
-def generate_qc_events(new_units):
-    
-    for i in range(new_units):
-        unit_id = f"unit_{unit_counter - new_units + i:06d}"
-        checkweigher_event = {
-            "event_id": str(uuid.uuid4()),
-            "event_type": "qc_inspection",
-            "line_id": line_spec["line_id"],
-            "station_id": "WEIGHER", 
-            "unit_id": unit_id,
-            "inspection_type":"CHECKWEIGHER", 
-            "result" : "PASS" if random.random() < 0.95 else "FAIL", 
-            "batch_id": batch_id,
-            "event_time": time.time()
-        }
-    
-        vision_event = {
-            "event_id": str(uuid.uuid4()),
-            "event_type": "qc_inspection",
-            "line_id": line_spec["line_id"],
-            "station_id": "SEALER", 
-            "unit_id": unit_id,
-            "inspection_type":"VISION", 
-            "result" : "PASS" if random.random() < 0.95 else "FAIL", 
-            "batch_id": batch_id,
-            "event_time": time.time()
-        }
-    
-        producer.send('line_events', value=checkweigher_event)
-        producer.flush()
-        print(f"Checkweigher event sent: {checkweigher_event}")
-        
-        producer.send('line_events', value=vision_event)
-        producer.flush()
-        print(f"Vision event sent: {vision_event}")
-    
-producer = KafkaProducer(
-    bootstrap_servers='localhost:9092',
-    value_serializer=lambda v: json.dumps(v).encode('utf-8')
-)
+    })
+    send(event)
 
+def generate_qc_events(new_units):
+    for i in range(new_units):
+        uid = f"unit_{unit_counter - new_units + i:06d}"
+        for inspection_type, station in [("CHECKWEIGHER", "WEIGHER"), ("VISION", "SEALER")]:
+            event = base_event("qc_inspection")
+            event.update({
+                "station_id": station,
+                "unit_id": uid,
+                "inspection_type": inspection_type,
+                "result": "PASS" if random.random() < 0.95 else "FAIL",
+                "batch_id": batch_id,
+            })
+            send(event)
+
+# Batch tracking
+def update_counters(new_units):
+    global unit_counter, batch_counter, batch_number, batch_id
+    global material_lot_number, material_lot_id
+
+    unit_counter += new_units
+    batch_counter += new_units
+
+    if batch_counter >= 50:
+        batch_number += 1
+        batch_id = f"batch_{batch_number:03d}"
+        batch_counter = 0
+        if batch_number % 2 == 1:
+            material_lot_number += 1
+            material_lot_id = f"lot_{material_lot_number:03d}"
+
+# Main loop
 while True:
-    states = ["RUN", "IDLE", "DOWN"]
-    new_state = random.choice(states)
-    new_state_start_time = time.time()
-    
-    # Check whether the state has been changed
-    if curr_state != new_state:
-        
+    new_state = random.choice(["RUN", "IDLE", "DOWN"])
+
+    # Update state tracker
+    if new_state != curr_state:
         curr_state = new_state
-        
-        # Line state events
-        data["event_id"] = str(uuid.uuid4())
-        data["event_type"] = "line_state"
-        data["state"] = new_state
-        data["state_start_time"] = new_state_start_time
-        data["event_time"] = time.time()
-        
-        if curr_state == "DOWN":
-            data["reason_code"] = random.choice(reason_codes)["code"]
-        else: 
-            data["reason_code"] = None
-            
-        producer.send('line_events', value=data)
-        producer.flush()
-        
-        print(f"STATE CHANGED to {new_state}" )
-    else:
-        print(f"still {curr_state}" )
-        data["event_time"] = time.time()
-        producer.send('line_events', value=data)
-        producer.flush()
-    
-    if new_state == 'RUN':
+        state_start_time = time.time()
+
+    # Always send line state
+    generate_line_state_event()
+
+    # Production events only when state is RUN
+    if curr_state == "RUN":
         new_units = random.randint(3, 8)
-        
-        # Update counters
-        unit_counter += new_units
-        batch_counter += new_units
-        if batch_counter >= 50:
-            batch_number += 1
-            batch_id = f"batch_{batch_number:03d}"
-            batch_counter = 0
-            if batch_number % 2 == 1:
-                material_lot_number += 1
-                material_lot_id = f"lot_{material_lot_number:03d}"
-                
-        # Production events
+        update_counters(new_units)
         generate_production_event(new_units)
-        
-        # Rejection events
         if random.random() < 0.05:
             generate_reject_event()
-            
-        # Quality control events
         generate_qc_events(new_units)
-            
+
     time.sleep(5)
