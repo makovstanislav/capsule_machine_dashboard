@@ -142,6 +142,15 @@ def handle_production(event):
         if spec_pct > 110:
             print(f"WARNING: throughput {spec_pct}% exceeds 110% of spec")
         print(f"Throughput: {spec_pct}% of spec")
+        upsert({
+            "line_id": line_id,
+            "throughput_per_min": throughput,
+            "spec_performance_pct": spec_pct,
+            "declared_output_per_min": declared,
+            "total_run_minutes": run_min,
+            "last_updated": time.time()
+        }, "throughput_summary")
+        
 
 def handle_reject(event):
     line_id = event["line_id"]
