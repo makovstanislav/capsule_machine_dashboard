@@ -17,6 +17,7 @@ total_good_units = {}
 total_cycles = {}       
 total_rejects = {}      
 seen_ids = set()        # for dedup. Resets to 0 after 10k for memory saving
+total_run_minutes = {}  # for throughput deviation
 
 # Kafka
 consumer = KafkaConsumer(
@@ -103,6 +104,8 @@ def handle_line_state(event):
                 ),
             }
             append(interval, "state_intervals")
+            if interval["state"] == "RUN":
+                _inc(total_run_minutes, line_id, interval["duration_minutes"])
             previous_state.update({
                 "state": event["state"],
                 "start_time": event["state_start_time"],
@@ -130,6 +133,15 @@ def handle_production(event):
         "total_cycles": total_cycles[line_id],
         "last_updated": time.time(),
     }, "production_summary")
+    
+    run_min = total_run_minutes.get(line_id, 0)
+    if run_min > 0:
+        throughput = total_good_units[line_id] / run_min
+        declared = line_spec["declared_output_per_min"]
+        spec_pct = round(throughput / declared * 100, 1)
+        if spec_pct > 110:
+            print(f"WARNING: throughput {spec_pct}% exceeds 110% of spec")
+        print(f"Throughput: {spec_pct}% of spec")
 
 def handle_reject(event):
     line_id = event["line_id"]
