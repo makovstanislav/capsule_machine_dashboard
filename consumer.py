@@ -150,6 +150,21 @@ def handle_production(event):
             "total_run_minutes": run_min,
             "last_updated": time.time()
         }, "throughput_summary")
+    
+    # Cycles vs spec
+    if run_min > 0:
+        avg_cycles = total_cycles[line_id] / run_min
+        declared_cycles = line_spec["declared_cycles_per_min"]
+        cycles_pct = round(avg_cycles / declared_cycles * 100, 1)
+        if total_cycles[line_id] > 0 and total_good_units[line_id] == 0:
+            print(f"WARNING: {total_cycles[line_id]} cycles but 0 units --> suspicious")
+        print(f"Cycles: {cycles_pct}% of spec")
+        upsert({
+            "line_id": line_id,
+            "avg_cycles_per_min": round(avg_cycles, 2),
+            "cycles_vs_spec_pct": cycles_pct,
+            "last_updated": time.time(),
+        }, "cycles_summary")
         
 
 def handle_reject(event):
