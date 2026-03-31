@@ -20,6 +20,7 @@ seen_ids = set()        # for dedup. Resets to 0 after 10k for memory saving
 total_run_minutes = {}  # for throughput deviation
 inspected_units = {}    # set of inspection_types seen per unit_id
 fully_inspected_count = 0
+rejects_by_lot = {}
 
 # Kafka
 consumer = KafkaConsumer(
@@ -178,6 +179,11 @@ def handle_reject(event):
     total = good + rejects
     reject_rate = round(rejects / total * 100, 1) if total > 0 else 0
 
+    # Rejections tracking by batch
+    lot_id = event.get("material_lot_id", "UNKNOWN_LOT")
+    _inc(rejects_by_lot, lot_id)
+    print(f"Lot {lot_id}: {rejects_by_lot[lot_id]} rejects")
+    
     append(event, "reject_events")
     upsert({
         "line_id": line_id,
