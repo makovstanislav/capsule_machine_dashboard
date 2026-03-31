@@ -94,6 +94,21 @@ def generate_qc_events(new_units):
             })
             send(event)
 
+def generate_station_events(new_units):
+    station_order = [s["station_id"] for s in stations]
+    # Track only 1 unit per cycle to avoid event explosion
+    uid = f"unit_{unit_counter - new_units:06d}"
+    for station in station_order:
+        for action in ["ENTER", "EXIT"]:
+            event = base_event("station_state")
+            event.update({
+                "station_id": station,
+                "unit_id": uid,
+                "batch_id": batch_id,
+                "action": action,
+            })
+            send(event)
+            
 # Batch tracking
 def update_counters(new_units):
     global unit_counter, batch_counter, batch_number, batch_id
@@ -130,5 +145,6 @@ while True:
         if random.random() < 0.05:
             generate_reject_event()
         generate_qc_events(new_units)
+        generate_station_events(new_units)
 
     time.sleep(5)
