@@ -18,6 +18,8 @@ total_cycles = {}
 total_rejects = {}      
 seen_ids = set()        # for dedup. Resets to 0 after 10k for memory saving
 total_run_minutes = {}  # for throughput deviation
+inspected_units = {}    # set of inspection_types seen per unit_id
+fully_inspected_count = 0
 
 # Kafka
 consumer = KafkaConsumer(
@@ -186,7 +188,46 @@ def handle_reject(event):
     }, "reject_summary")
 
 def handle_qc(event):
+    global fully_inspected_count
+
+    unit_id = event["unit_id"]
+    line_id = event["line_id"]
+
+    # Track inspections per unit
+    if unit_id not in inspected_units:
+        inspected_units[unit_id] = set()
+
+    was_complete = inspected_units[unit_id] >= {"VISION", "CHECKWEIGHER"}
+    inspected_units[unit_id].add(event["inspection_type"])
+    is_complete = inspected_units[unit_id] >= {"VISION", "CHECKWEIGHER"}
+
+    # Count newly completed units
+    if is_complete and not was_complete:
+        fully_inspected_count += 1
+
+    # Compute coverage
+    produced = total_good_units.get(line_id, 0)
+    if produced > 0:
+        coverage = round(fully_inspected_count / produced * 100, 1)
+        if coverage > 100:
+            print(f"WARNING: QC coverage {coverage}% > 100% — possible duplicates")
+        if coverage < 95:
+            print(f"WARNING: QC coverage {coverage}% below 95% threshold")
+
+        upsert({
+            "line_id": line_id,
+            "qc_coverage_pct": coverage,
+            "fully_inspected_count": fully_inspected_count,
+            "total_produced": produced,
+            "last_updated": time.time(),
+        }, "qc_summary")
+
     append(event, "qc_events")
+
+    # Memory limitation (same like seen_ids)
+    if len(inspected_units) > 10000:
+        inspected_units.clear()
+        fully_inspected_count = 0  # reset — documented tradeoff
 
 # Routing
 HANDLERS = {
