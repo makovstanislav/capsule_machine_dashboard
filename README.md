@@ -14,7 +14,8 @@ graph LR
 Python, Kafka, OpenSearch, Docker 
 
 ### Dashboard
-<img src="docs/dashboard.png" width="700"><br>
+<img src="docs/dashboard_1.png" width="700"><br>
+<img src="docs/dashboard_2.png" width="700"><br>
 
 ### Metrics implemented
 1. Line status (RUN/IDLE/DOWN/STALE)
