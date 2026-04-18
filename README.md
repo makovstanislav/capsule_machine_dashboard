@@ -19,12 +19,17 @@ Python, Kafka, OpenSearch, Docker
 
 ### Metrics implemented
 1. Line status (RUN/IDLE/DOWN/STALE)
-2. Units produced – Total
-3. Units produced – Trend
-4. Downtime (minutes) – Trend
-5. Downtime – Pareto
-6. Time-in-State  
+2. Units produced (total + trend)
+3. Throughput vs spec
+4. Cycles vs spec
+5. Downtime (trend + pareto)
+6. Time-in-State
 7. Reject rate
+8. Reject reason Pareto
+9. Rejects by station
+10. QC coverage
+11. Scrap by material lot
+12. Batch traceability
 
 ## How to run
 **Pre-conditions**
