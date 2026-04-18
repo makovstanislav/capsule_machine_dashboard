@@ -1,5 +1,6 @@
 from kafka import KafkaConsumer
 import requests, json, time, uuid
+from datetime import datetime, timezone
 
 # Config
 with open("config/reason_codes.json") as f:
@@ -22,6 +23,15 @@ inspected_units = {}    # set of inspection_types seen per unit_id
 fully_inspected_count = 0
 rejects_by_lot = {}
 
+def parse_ts(ts):
+    """Конвертирует ISO строку обратно в объект datetime"""
+    if not ts: return None
+    if isinstance(ts, (int, float)): return datetime.fromtimestamp(ts, tz=timezone.utc)
+    return datetime.fromisoformat(ts.replace('Z', '+00:00'))
+
+def get_now_iso():
+    return datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z')
+
 # Kafka
 consumer = KafkaConsumer(
     "line_events",
@@ -36,33 +46,40 @@ def upsert(event, index_name):
     doc_id = event["line_id"]
     url = f"http://localhost:9200/{index_name}/_update/{doc_id}"
     body = {"doc": event, "doc_as_upsert": True}
-    r = requests.post(url, json=body)
-    print(r.json())
+    try:
+        r = requests.post(url, json=body)
+        print(r.json())
+    except Exception:
+        pass
 
 def append(event, index_name):
     doc_id = event["event_id"]
     url = f"http://localhost:9200/{index_name}/_doc/{doc_id}"
-    r = requests.put(url, json=event)
-    print(r.json())
+    try:
+        r = requests.put(url, json=event)
+        print(r.json())
+    except Exception:
+        pass
 
 def send_to_dlq(event, reason):
     event["rejection_reason"] = reason
-    event["rejected_at"] = time.time()
+    event["rejected_at"] = get_now_iso()
     append(event, "dead_letter_queue")
 
 # Validation (line_state only)
 def validate(event):
-    t_start = event["state_start_time"]
-    t_event = event["event_time"]
-    t_now = time.time()
+    t_start = parse_ts(event["state_start_time"])
+    t_event = parse_ts(event["event_time"])
+    t_now = datetime.now(timezone.utc)
     line_id = event["line_id"]
 
     if t_start > t_now:
         return False, "state_start_time is in the future"
     if t_event < t_start:
         return False, "event_time is before state_start_time"
-    if line_id in last_event_time and t_event <= last_event_time[line_id]:
-        return False, "event_time is older than last seen"
+    if line_id in last_event_time:
+        if t_event <= parse_ts(last_event_time[line_id]):
+            return False, "event_time is older than last seen"
     return True, None
 
 # Helpers
@@ -84,16 +101,21 @@ def handle_line_state(event):
         return
 
     line_id = event["line_id"]
-    event["time_in_state"] = event["event_time"] - event["state_start_time"]
+    
+    t_event = parse_ts(event["event_time"])
+    t_start = parse_ts(event["state_start_time"])
+    event["time_in_state"] = (t_event - t_start).total_seconds()
+    
     upsert(event, "line_status")
 
     last_event_time[line_id] = event["event_time"]
-    last_seen[line_id] = time.time()
+    last_seen[line_id] = event["event_time"]
 
     # Build interval on state change
     if previous_state:
         if event["state"] != previous_state["state"]:
-            duration = event["event_time"] - previous_state["start_time"]
+            t_prev_start = parse_ts(previous_state["start_time"])
+            duration = (t_event - t_prev_start).total_seconds()
             interval = {
                 "event_id": str(uuid.uuid4()),
                 "line_id": line_id,
@@ -134,7 +156,7 @@ def handle_production(event):
         "line_id": line_id,
         "total_good_units": total_good_units[line_id],
         "total_cycles": total_cycles[line_id],
-        "last_updated": time.time(),
+        "last_updated": get_now_iso(),
     }, "production_summary")
     
     run_min = total_run_minutes.get(line_id, 0)
@@ -151,7 +173,7 @@ def handle_production(event):
             "spec_performance_pct": spec_pct,
             "declared_output_per_min": declared,
             "total_run_minutes": run_min,
-            "last_updated": time.time()
+            "last_updated": get_now_iso()
         }, "throughput_summary")
     
     # Cycles vs spec
@@ -166,9 +188,8 @@ def handle_production(event):
             "line_id": line_id,
             "avg_cycles_per_min": round(avg_cycles, 2),
             "cycles_vs_spec_pct": cycles_pct,
-            "last_updated": time.time(),
+            "last_updated": get_now_iso(),
         }, "cycles_summary")
-        
 
 def handle_reject(event):
     line_id = event["line_id"]
@@ -190,7 +211,7 @@ def handle_reject(event):
         "total_rejects": rejects,
         "total_good_units": good,
         "reject_rate": reject_rate,
-        "last_updated": time.time(),
+        "last_updated": get_now_iso(),
     }, "reject_summary")
 
 def handle_qc(event):
@@ -225,7 +246,7 @@ def handle_qc(event):
             "qc_coverage_pct": coverage,
             "fully_inspected_count": fully_inspected_count,
             "total_produced": produced,
-            "last_updated": time.time(),
+            "last_updated": get_now_iso(),
         }, "qc_summary")
 
     append(event, "qc_events")
@@ -234,13 +255,17 @@ def handle_qc(event):
     if len(inspected_units) > 10000:
         inspected_units.clear()
         fully_inspected_count = 0  # reset — documented tradeoff
-
+    
+def handle_station_state(event):
+    append(event, "station_events")
+    
 # Routing
 HANDLERS = {
     "line_state": handle_line_state,
     "production": handle_production,
     "reject": handle_reject,
     "qc_inspection": handle_qc,
+    "station_state": handle_station_state
 }
 
 # Main loop
@@ -265,13 +290,15 @@ while True:
             print(f"Unknown event_type: {event_type}")
 
     # Stale detection
-    now = time.time()
-    for line_id, ts in last_seen.items():
-        if now - ts > 30:
+    now_dt = datetime.now(timezone.utc)
+    for line_id, ts_str in last_seen.items():
+        ts_dt = parse_ts(ts_str)
+        diff = (now_dt - ts_dt).total_seconds()
+        if diff > 30:
             upsert({
                 "line_id": line_id,
                 "state": "STALE",
-                "event_time": now,
-                "state_start_time": ts,
-                "time_in_state": now - ts,
+                "event_time": get_now_iso(),
+                "state_start_time": ts_str,
+                "time_in_state": diff,
             }, "line_status")

@@ -1,4 +1,5 @@
 import random, time, uuid, json
+from datetime import datetime, timezone
 from kafka import KafkaProducer
 
 # Config
@@ -15,9 +16,12 @@ LINE_ID = line_spec["line_id"]
 STATION_IDS = [s["station_id"] for s in stations]
 REASON_CODES = [r["code"] for r in reason_codes]
 
+def get_now_iso():
+    return datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z')
+
 # State
 curr_state = "DOWN"
-state_start_time = time.time()
+state_start_time = get_now_iso()
 
 unit_counter = 0
 batch_counter = 0
@@ -46,7 +50,7 @@ def base_event(event_type):
         "event_id": str(uuid.uuid4()),
         "event_type": event_type,
         "line_id": LINE_ID,
-        "event_time": time.time(),
+        "event_time": get_now_iso(),
     }
 
 # Event producers
@@ -132,7 +136,7 @@ while True:
     # Update state tracker
     if new_state != curr_state:
         curr_state = new_state
-        state_start_time = time.time()
+        state_start_time = get_now_iso()
 
     # Always send line state
     generate_line_state_event()
