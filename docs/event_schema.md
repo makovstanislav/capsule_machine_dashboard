@@ -109,3 +109,70 @@ Two documents per unit (VISION + CHECKWEIGHER). Append.
 | result | string | "PASS" or "FAIL" |
 | batch_id | string | |
 | event_time | float | Unix timestamp |
+
+#### `station_state`
+Sent when a unit enters/exits a station. One event per action per station.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| event_id | string | uuid4 |
+| event_type | string | "station_state" |
+| line_id | string | e.g. "line_1" |
+| station_id | string | FILLER / SEALER / WEIGHER / PACKER |
+| unit_id | string | e.g. "unit_000042" |
+| batch_id | string | e.g. "batch_001" |
+| action | string | "ENTER" or "EXIT" |
+| event_time | float | Unix timestamp |
+
+<br><br>
+
+# Summary Indexes
+
+These are upserted documents (1 per line), not raw events.
+
+#### `throughput_summary`
+1 document per line. Upsert.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| line_id | string | e.g. "line_1" |
+| throughput_per_min | float | Actual units per RUN minute |
+| spec_performance_pct | float | (actual / declared) * 100 |
+| declared_output_per_min | int | From config (26) |
+| total_run_minutes | float | Cumulative RUN minutes |
+| last_updated | float | Unix timestamp |
+
+#### `cycles_summary`
+1 document per line. Upsert.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| line_id | string | e.g. "line_1" |
+| avg_cycles_per_min | float | total_cycles / total_run_minutes |
+| cycles_vs_spec_pct | float | (actual / declared) * 100 |
+| last_updated | float | Unix timestamp |
+
+#### `qc_summary`
+1 document per line. Upsert.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| line_id | string | e.g. "line_1" |
+| qc_coverage_pct | float | (fully_inspected / produced) * 100 |
+| fully_inspected_count | int | Units with BOTH VISION and CHECKWEIGHER |
+| total_produced | int | Total good units produced |
+| last_updated | float | Unix timestamp |
+
+#### `station_events`
+One document per station action. Append.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| event_id | string | uuid4 |
+| event_type | string | "station_state" |
+| line_id | string | |
+| station_id | string | FILLER / SEALER / WEIGHER / PACKER |
+| unit_id | string | |
+| batch_id | string | |
+| action | string | ENTER / EXIT |
+| event_time | date (epoch_second) | |
