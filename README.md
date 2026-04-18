@@ -44,30 +44,57 @@ Python, Kafka, OpenSearch, Docker
 3. For exploring a particular index: get a list `curl -X GET "localhost:9200/_cat/indices?v"` and navigate to http://localhost:9200/{index_name}/_search 
 
 ## Data quality gates
+
 **Line status**
-1. Rejects events with `state_start_time` in the future (impossible timestamps).
-2. Rejects events with `event_time < state_start_time` (impossible time-in-state).
-3. Rejects events that arrive late out-of-order – ensures correct order
-4. Sets the state as STALE when producer doesn't send data for 30s – prevents false confidence.
+1. Rejects events with `state_start_time` in the future
+2. Rejects events with `event_time < state_start_time`
+3. Rejects out-of-order events (event_time ≤ last seen)
+4. Sets state to STALE if no data for 30 seconds
+5. Invalid events routed to Dead Letter Queue with rejection reason
 
-**Units produced**
-1. Deduplication / idempotency
-2. Total over period equals sum of buckets
+**Production**
+1. Deduplication via in-memory set (cleared at 10k to prevent memory leak)
+2. Idempotent writes to OpenSearch (PUT with event_id as doc_id)
 
-**Downtime trend**
-1. No overlapping intervals per line
-2. No double counting or data loss <br>
-  Test case:
-    `assert sum(downtime_by_window) == actual_interval_duration`
-3. RUN+IDLE+DOWN = window duration 
-
-**Downtime Pareto**
-1. Each DOWN interval has `reason_code` 
-2. Each reason_code is mapped to category (mechanical / electrical / material)
-3. Events with unknown codes are sent to Dead Letter Queue
+**Downtime**
+1. Intervals computed only on state transitions (no double-counting heartbeats)
+2. Each DOWN interval carries a `reason_code`
+3. Unknown/invalid reason codes replaced with `UNKNOWN_REASON`
+4. Reason codes validated against `config/reason_codes.json`
 
 **Reject rate**
-1. `reject_rate = reject_units / (good_units + reject_units)`
-2. If `(good+reject)=0` then metric returns N/A (not 0%)
-3. No double counting of the same rejected unit 
-4. If unit appears in both good AND reject -> reject wins
+1. `reject_rate = rejects / (good + rejects) * 100`
+2. Returns 0 (not crash) if denominator is 0
+3. Rejects tracked per material lot for traceability
+
+**Throughput & Cycles**
+1. Computed only during RUN time (IDLE/DOWN excluded)
+2. Returns N/A if RUN minutes = 0
+3. Warns if throughput exceeds 110% of spec (possible data bug)
+4. Warns if cycles > 0 but units = 0 (suspicious)
+
+**QC coverage**
+1. Requires BOTH VISION and CHECKWEIGHER per unit
+2. Linked to production by `unit_id`
+3. Warns if coverage > 100% (possible duplicates)
+4. Warns if coverage < 95% (below threshold)
+5. Memory-limited (inspected_units dict cleared at 10k)
+
+**Reject Pareto & Station**
+1. `reject_reason` from normalized dictionary (`config/reject_reasons.json`)
+2. `station_id` from fixed reference list (`config/stations.json`)
+
+## Roadmap
+
+1. **QC coverage metric.** 
+- Add late inspections handling: if inspection timestamp > production_time + 5min -> flag as suspicious
+- Missing inspection reasons tracked:
+  - unit bypassed inspection (emergency mode?)
+  - inspection failed to record (system bug?)
+2. **Downtime metric.** Window cutting: intervals crossing window boundaries are clipped correctly. <br>
+  Example:<br>
+    - Downtime in 08:00-09:00 window = 10 min (08:50-09:00)<br>
+    - Downtime in 09:00-10:00 window = 10 min (09:00-09:10)<br>
+    - Total downtime for interval = 20 min (GOOD)
+3. **Reject rate metric**. If unit appears in both good AND reject -> reject wins. Business rule: once failed, always failed.
+4. Reconciliation checks (sum by reason = total). 
