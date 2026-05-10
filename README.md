@@ -1,4 +1,9 @@
-System monitors a coffee capsule filling machine and displays real-time data on a dashboard. The end user is a factory operator. Data engineer capstone project.
+### Objective
+System should 
+- monitor a factory machine, which is in the process of filling capsules with coffee ground (Nespresso-like capsules), and
+- display real-time data on a dashboard
+
+The end user is a factory operator. Data engineer capstone project.
 
 ### Architecture
 System simulates a stream of data, passes it through Kafka, validates and saves to OpenSearch. Visualization in OpenSearch Dashboards. One topic used.<br>
