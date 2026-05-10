@@ -1,6 +1,6 @@
 ### Objective
 System should 
-- monitor a factory machine, which is in the process of filling capsules with coffee ground (Nespresso-like capsules), and
+- monitor a factory machine, which is in the process of filling capsules (Nespresso-like) with coffee ground, and
 - display real-time data on a dashboard
 
 The end user is a factory operator. Data engineer capstone project.
