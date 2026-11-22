@@ -44,38 +44,17 @@ Python, Kafka, OpenSearch, Docker
 3. Install requirements `pip3 install -r requirements.txt` 
 
 **Run**
-1. Start the services: `docker compose up -d`.
-2. Wait for OpenSearch to answer before starting Python:
-   ```sh
-   curl --fail 'http://localhost:9200/_cluster/health?wait_for_status=yellow&timeout=60s'
-   ```
-   If the connection is refused, startup is still in progress. Check
-   `docker compose ps` and `docker compose logs --tail=100 opensearch`.
-   Retry the health request once the service is running.
-3. Start Consumer in one terminal: `python3 consumer.py`.
-4. Start Producer in another terminal: `python3 producer.py`.
-   Start the consumer first: it currently reads from the latest Kafka offset,
-   so events sent before it subscribes may be skipped. Keep both processes running.
+1. Start a docker container `docker compose up -d`
+2. Run Producer `python3 producer.py`
+3. Create a new terminal and run Consumer `python3 consumer.py`
 
 **Verify**
-1. Wait for the producer's first `[line_state]` message (normally within 5 seconds)
-   and a successful consumer write. OpenSearch search refresh can take another second.
-2. Open http://localhost:9200/line_status/_search in a browser. The response should
-   contain a document under `hits.hits` with `_source.state` equal to `RUN`, `IDLE`,
-   or `DOWN`. After 30 seconds without a heartbeat it may show `STALE`.
-3. A `404 index_not_found_exception` means no document has created `line_status`
-   yet. Waiting alone will not help if either Python process has stopped. Check
-   both terminal logs, confirm the consumer started before the producer, and use:
-   ```sh
-   curl --fail 'http://localhost:9200/_cat/indices?v'
-   curl --fail 'http://localhost:9200/line_status/_count'
-   ```
-4. For an existing index, open `http://localhost:9200/INDEX_NAME/_search`, replacing
-   `INDEX_NAME` with an actual name from the list. Production and QC indices appear
-   only after the simulator enters RUN; state intervals appear after a transition.
-5. If the API responds but `hits.hits` is empty, allow one search refresh and check
-   the count again. If no documents arrive, inspect the producer and consumer logs
-   for Kafka connection errors, validation failures, or OpenSearch write errors.
+
+The index may not appear immediately after startup. Wait a few seconds for the first events to arrive, then refresh the page.
+
+1. Open http://localhost:9200/line_status/_search in a browser 
+2. You want to see a dictionary containing the field “state” with the value `RUN`, `IDLE` or `DOWN`
+3. For exploring a particular index: get a list `curl -X GET "localhost:9200/_cat/indices?v"` and navigate to http://localhost:9200/{index_name}/_search 
 
 ## Data quality gates
 
