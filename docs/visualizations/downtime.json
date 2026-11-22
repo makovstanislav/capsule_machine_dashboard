@@ -1,0 +1,100 @@
+{
+  "$schema": "https://vega.github.io/schema/vega-lite/v5.json",
+  "title": "DOWN minutes (confirmed heartbeats)",
+  "data": {
+    "url": {
+      "index": "state_hours",
+      "body": {
+        "size": 0,
+        "query": {
+          "bool": {
+            "must": [
+              "%dashboard_context-must_clause%"
+            ],
+            "must_not": [
+              "%dashboard_context-must_not_clause%"
+            ],
+            "filter": [
+              "%dashboard_context-filter_clause%",
+              {
+                "term": {
+                  "state": "DOWN"
+                }
+              },
+              {
+                "range": {
+                  "start_time": {
+                    "lt": {
+                      "%timefilter%": "max"
+                    }
+                  }
+                }
+              },
+              {
+                "range": {
+                  "end_time": {
+                    "gt": {
+                      "%timefilter%": "min"
+                    }
+                  }
+                }
+              }
+            ]
+          }
+        },
+        "aggs": {
+          "hours": {
+            "date_histogram": {
+              "field": "hour",
+              "fixed_interval": "1h"
+            },
+            "aggs": {
+              "minutes": {
+                "sum": {
+                  "script": {
+                    "source": "long from = params.from instanceof Number ? params.from.longValue() : Instant.parse(params.from).toEpochMilli(); long to = params.to instanceof Number ? params.to.longValue() : Instant.parse(params.to).toEpochMilli(); return Math.max(0, Math.min(doc['end_time'].value.toInstant().toEpochMilli(), to) - Math.max(doc['start_time'].value.toInstant().toEpochMilli(), from)) / 60000.0;",
+                    "params": {
+                      "from": {
+                        "%timefilter%": "min"
+                      },
+                      "to": {
+                        "%timefilter%": "max"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "format": {
+      "property": "aggregations.hours.buckets"
+    }
+  },
+  "mark": "bar",
+  "encoding": {
+    "x": {
+      "field": "key",
+      "type": "temporal",
+      "title": "Hour"
+    },
+    "y": {
+      "field": "minutes.value",
+      "type": "quantitative",
+      "title": "DOWN minutes"
+    },
+    "tooltip": [
+      {
+        "field": "key_as_string",
+        "title": "Hour"
+      },
+      {
+        "field": "minutes.value",
+        "title": "DOWN minutes",
+        "format": ".2f"
+      }
+    ]
+  }
+}

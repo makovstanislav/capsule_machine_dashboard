@@ -22,7 +22,9 @@ def get_now_iso():
 # State
 curr_state = "DOWN"
 state_start_time = get_now_iso()
+down_reason = random.choice(REASON_CODES)
 
+run_id = uuid.uuid4().hex
 unit_counter = 0
 batch_counter = 0
 batch_number = 1
@@ -30,11 +32,7 @@ batch_id = "batch_001"
 material_lot_number = 1
 material_lot_id = "lot_001"
 
-# Kafka
-producer = KafkaProducer(
-    bootstrap_servers="localhost:9092",
-    value_serializer=lambda v: json.dumps(v).encode("utf-8"),
-)
+producer = None
 TOPIC = "line_events"
 
 # Helpers
@@ -59,60 +57,42 @@ def generate_line_state_event():
     event.update({
         "state": curr_state,
         "state_start_time": state_start_time,
-        "reason_code": random.choice(REASON_CODES) if curr_state == "DOWN" else None,
+        "reason_code": down_reason if curr_state == "DOWN" else None,
     })
     send(event)
 
-def generate_production_event(new_units):
-    event = base_event("production")
-    event.update({
-        "station_id": random.choice(STATION_IDS),
-        "good_count_inc": new_units,
-        "cycles_count_inc": 1,
-        "batch_id": batch_id,
-    })
-    send(event)
-
-def generate_reject_event():
-    event = base_event("reject")
-    event.update({
-        "station_id": random.choice(STATION_IDS),
-        "unit_id": f"unit_{unit_counter:06d}",
-        "reject_reason": random.choice(reject_reasons),
-        "material_lot_id": material_lot_id,
-        "batch_id": batch_id,
-    })
-    send(event)
-
-def generate_qc_events(new_units):
-    for i in range(new_units):
-        uid = f"unit_{unit_counter - new_units + i:06d}"
+def generate_cycle(new_units):
+    cycle_id = f"{run_id}:{LINE_ID}:cycle:{unit_counter}"
+    for number in range(unit_counter - new_units, unit_counter):
+        unit_id = f"{run_id}:{LINE_ID}:{number}"
+        reason = random.choice(reject_reasons) if random.random() < 0.05 else None
+        failed_type = random.choice(["VISION", "CHECKWEIGHER"]) if reason else None
+        failed_station = {"VISION": "SEALER", "CHECKWEIGHER": "WEIGHER"}.get(failed_type)
+        fields = {"unit_id": unit_id, "batch_id": batch_id,
+                  "material_lot_id": material_lot_id}
+        event = base_event("production")
+        event.update(fields, station_id="PACKER", cycle_id=cycle_id,
+                     good_count_inc=0 if reason else 1,
+                     cycles_count_inc=1 if number == unit_counter - new_units else 0,
+                     result="FAIL" if reason else "PASS", reject_reason=reason)
+        send(event)
         for inspection_type, station in [("CHECKWEIGHER", "WEIGHER"), ("VISION", "SEALER")]:
             event = base_event("qc_inspection")
-            event.update({
-                "station_id": station,
-                "unit_id": uid,
-                "inspection_type": inspection_type,
-                "result": "PASS" if random.random() < 0.95 else "FAIL",
-                "batch_id": batch_id,
-            })
+            event.update(fields, station_id=station, inspection_type=inspection_type,
+                         result="FAIL" if inspection_type == failed_type else "PASS")
             send(event)
+        if reason:
+            event = base_event("reject")
+            event.update(fields, station_id=failed_station, reject_reason=reason)
+            send(event)
+        for station in STATION_IDS:
+            for action in ["ENTER", "EXIT"]:
+                event = base_event("station_state")
+                event.update(fields, station_id=station, action=action)
+                send(event)
+            if station == failed_station:
+                break
 
-def generate_station_events(new_units):
-    station_order = [s["station_id"] for s in stations]
-    # Track only 1 unit per cycle to avoid event explosion
-    uid = f"unit_{unit_counter - new_units:06d}"
-    for station in station_order:
-        for action in ["ENTER", "EXIT"]:
-            event = base_event("station_state")
-            event.update({
-                "station_id": station,
-                "unit_id": uid,
-                "batch_id": batch_id,
-                "action": action,
-            })
-            send(event)
-            
 # Batch tracking
 def update_counters(new_units):
     global unit_counter, batch_counter, batch_number, batch_id
@@ -129,26 +109,23 @@ def update_counters(new_units):
             material_lot_number += 1
             material_lot_id = f"lot_{material_lot_number:03d}"
 
-# Main loop
-while True:
-    new_state = random.choice(["RUN", "IDLE", "DOWN"])
+def main():
+    global curr_state, state_start_time, producer, down_reason
+    producer = KafkaProducer(bootstrap_servers="localhost:9092",
+                             value_serializer=lambda value: json.dumps(value).encode("utf-8"))
+    while True:
+        new_state = random.choice(["RUN", "IDLE", "DOWN"])
+        if new_state != curr_state:
+            curr_state = new_state
+            state_start_time = get_now_iso()
+            down_reason = random.choice(REASON_CODES) if curr_state == "DOWN" else None
+        generate_line_state_event()
+        if curr_state == "RUN":
+            new_units = random.randint(3, 8)
+            update_counters(new_units)
+            generate_cycle(new_units)
+        time.sleep(5)
 
-    # Update state tracker
-    if new_state != curr_state:
-        curr_state = new_state
-        state_start_time = get_now_iso()
 
-    # Always send line state
-    generate_line_state_event()
-
-    # Production events only when state is RUN
-    if curr_state == "RUN":
-        new_units = random.randint(3, 8)
-        update_counters(new_units)
-        generate_production_event(new_units)
-        if random.random() < 0.05:
-            generate_reject_event()
-        generate_qc_events(new_units)
-        generate_station_events(new_units)
-
-    time.sleep(5)
+if __name__ == "__main__":
+    main()

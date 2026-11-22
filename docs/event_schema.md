@@ -12,7 +12,7 @@ Required fields by type:
 | Type | Additional required fields | Allowed values |
 | --- | --- | --- |
 | line_state | state, state_start_time, reason_code | RUN, IDLE, DOWN; reason_code may be null |
-| production | station_id, batch_id, good_count_inc, cycles_count_inc | Integer counters >= 0 |
+| production | station_id, batch_id, unit_id, material_lot_id, cycle_id, result, reject_reason, good_count_inc, cycles_count_inc | One capsule; PASS or FAIL; good_count_inc is 1 for PASS and 0 for FAIL; reject_reason may be null for PASS |
 | reject | station_id, batch_id, unit_id, reject_reason, material_lot_id | Nonempty strings |
 | qc_inspection | station_id, batch_id, unit_id, inspection_type, result | VISION or CHECKWEIGHER; PASS or FAIL |
 | station_state | station_id, batch_id, unit_id, action | ENTER or EXIT |
@@ -72,17 +72,23 @@ Sent every 5 seconds when state=RUN
 | line_id | string | Ex: "line_2" |
 | station_id | string | Ex: "station_2" |
 | good_count_inc | int | Incremental |
-| cycles_count_inc | int | Incremental |
+| cycles_count_inc | int | Cycle increment on the first capsule only; stored separately by cycle_id |
+| cycle_id | keyword | Stable ID shared by the cycle |
+| unit_id | keyword | Producer run + line + capsule number |
+| material_lot_id | keyword | Material lot |
+| result | keyword | PASS or FAIL; FAIL wins on conflicts |
+| reject_reason | keyword or null | Reason for FAIL, otherwise null |
 | batch_id | string | Ex: "batch_001" |
 | event_time | date | UTC ISO 8601 |
 
 #### `production_summary`
-1 document per line, running totals. Upsert.
+1 document per line, totals derived from persisted capsule outcomes. Upsert.
  
 | Field | Type | Description |
 |-------|------|-------------|
 | line_id | string | |
-| total_good_units | long | Cumulative units produced |
+| total_produced | long | Unique released capsules, including rejects |
+| total_good_units | long | Unique PASS capsules |
 | total_cycles | long | Cumulative cycles |
 | last_updated | date | UTC ISO 8601 |
 
@@ -114,7 +120,7 @@ One document per rejected unit. Append.
 | last_updated | date | UTC ISO 8601 |
 
 #### `state_intervals`
-One document per state transition. Append.
+One document per state interval, updated through the latest confirmed heartbeat; closed at the next transition. Stable ID, upsert via PUT.
  
 | Field | Type | Description |
 |-------|------|-------------|
@@ -126,6 +132,8 @@ One document per state transition. Append.
 | duration_seconds | float | |
 | duration_minutes | float | |
 | reason_code | keyword | Only for DOWN, null otherwise |
+| closed | boolean | True after a confirmed transition |
+| confirmed_until | date | Last time included in the interval |
 
 #### `qc_events`
 Sent for each unit inspected (VISION / CHECKWEIGHER)
@@ -209,3 +217,4 @@ One document per station action. Append.
 | batch_id | string | |
 | action | string | ENTER / EXIT |
 | event_time | date (UTC ISO 8601) | |
+See [counts and states](counts_and_states.md) for persisted capsule outcomes, hourly downtime, range queries and checks.

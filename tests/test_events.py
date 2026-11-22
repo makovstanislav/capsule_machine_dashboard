@@ -36,8 +36,9 @@ class EventsTest(unittest.TestCase):
 
     def test_invalid_fields(self):
         base = dict(event_id='e', event_type='production', line_id='A',
-                    event_time=0, station_id='s', batch_id='b', good_count_inc=5,
-                    cycles_count_inc=1)
+                    event_time=0, station_id='s', batch_id='b', good_count_inc=1,
+                    cycles_count_inc=1, unit_id='u', material_lot_id='lot',
+                    cycle_id='cycle', result='PASS', reject_reason=None)
         self.assertEqual(validate_event(base)['event_time'], '1970-01-01T00:00:00Z')
         for count in [-1, True, 1.5]:
             with self.subTest(count=count), self.assertRaises(ValueError):
@@ -52,7 +53,9 @@ class EventsTest(unittest.TestCase):
         common = dict(event_id='e', line_id='A', event_time='2026-01-01T00:00:00Z')
         examples = {
             'line_state': dict(state='RUN', state_start_time=0, reason_code=None),
-            'production': dict(station_id='s', batch_id='b', good_count_inc=0, cycles_count_inc=0),
+            'production': dict(station_id='s', batch_id='b', good_count_inc=1, cycles_count_inc=0,
+                               unit_id='u', material_lot_id='l', cycle_id='c',
+                               result='PASS', reject_reason=None),
             'reject': dict(station_id='s', batch_id='b', unit_id='u', reject_reason='UNDERFILL', material_lot_id='l'),
             'qc_inspection': dict(station_id='s', batch_id='b', unit_id='u', inspection_type='VISION', result='FAIL'),
             'station_state': dict(station_id='s', batch_id='b', unit_id='u', action='EXIT'),

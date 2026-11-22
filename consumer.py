@@ -1,7 +1,9 @@
 from kafka import KafkaConsumer
-import requests, json, time, uuid
+import requests, json, time
 from datetime import datetime, timezone
 from event_contract import validate_event
+from production import counts, save_unit, document_id
+from intervals import hourly
 
 # Config
 with open("config/reason_codes.json") as f:
@@ -17,12 +19,10 @@ last_seen = {}          # last time a message arrived (for STALE detection)
 previous_state = {}     # {state, start_time, reason_code} for interval computation
 total_good_units = {}   
 total_cycles = {}       
-total_rejects = {}      
 seen_ids = set()        # for dedup. Resets to 0 after 10k for memory saving
 total_run_minutes = {}  # for throughput deviation
 inspected_units = {}    # set of inspection_types seen per unit_id
 fully_inspected_count = 0
-rejects_by_lot = {}
 
 def parse_ts(ts):
     """Конвертирует ISO строку обратно в объект datetime"""
@@ -38,11 +38,9 @@ def upsert(event, index_name):
     doc_id = event["line_id"]
     url = f"http://localhost:9200/{index_name}/_update/{doc_id}"
     body = {"doc": event, "doc_as_upsert": True}
-    try:
-        r = requests.post(url, json=body)
-        print(r.json())
-    except Exception:
-        pass
+    response = requests.post(url, json=body, timeout=10)
+    response.raise_for_status()
+    print(response.json())
 
 def append(event, index_name):
     doc_id = event["event_id"]
@@ -70,6 +68,10 @@ def validate(event):
     if line_id in last_event_time:
         if t_event <= parse_ts(last_event_time[line_id]):
             return False, "event_time is older than last seen"
+    prior = previous_state.get(line_id)
+    if prior and (prior["state"] != event["state"] or prior["start_time"] != event["state_start_time"]):
+        if t_start < parse_ts(last_event_time[line_id]):
+            return False, "state transition predates the last confirmed heartbeat"
     return True, None
 
 # Helpers
@@ -96,52 +98,85 @@ def handle_line_state(event):
     t_start = parse_ts(event["state_start_time"])
     event["time_in_state"] = (t_event - t_start).total_seconds()
     
+    prior = previous_state.get(line_id)
+    if prior and prior["state"] == event["state"] and prior["start_time"] == event["state_start_time"]:
+        event["reason_code"] = prior["reason_code"]
+    else:
+        event["reason_code"] = _validate_reason_code(event["reason_code"], event["state"])
+    event["last_known_state"] = event["state"]
+    event["last_heartbeat"] = event["event_time"]
     upsert(event, "line_status")
 
     last_event_time[line_id] = event["event_time"]
     last_seen[line_id] = event["event_time"]
 
-    # Build interval on state change
-    if previous_state:
-        if event["state"] != previous_state["state"]:
-            t_prev_start = parse_ts(previous_state["start_time"])
-            duration = (t_event - t_prev_start).total_seconds()
-            interval = {
-                "event_id": str(uuid.uuid4()),
-                "line_id": line_id,
-                "state": previous_state["state"],
-                "start_time": previous_state["start_time"],
-                "end_time": event["event_time"],
-                "duration_seconds": duration,
-                "duration_minutes": duration / 60,
-                "reason_code": _validate_reason_code(
-                    previous_state["reason_code"], previous_state["state"]
-                ),
-            }
-            append(interval, "state_intervals")
-            if interval["state"] == "RUN":
-                _inc(total_run_minutes, line_id, interval["duration_minutes"])
-            previous_state.update({
-                "state": event["state"],
-                "start_time": event["state_start_time"],
-                "reason_code": event["reason_code"],
-            })
-    else:
-        previous_state.update({
-            "line_id": line_id,
-            "state": event["state"],
-            "start_time": event["event_time"],
-            "reason_code": _validate_reason_code(
-                event["reason_code"], event["state"]
-            ),
-        })
+    prior = previous_state.get(line_id)
+    changed = prior and (prior["state"] != event["state"] or
+                         prior["start_time"] != event["state_start_time"])
+    if changed:
+        write_interval(line_id, prior, event["state_start_time"], closed=True)
+    if prior is None or changed:
+        prior = {"state": event["state"], "start_time": event["state_start_time"],
+                 "reason_code": _validate_reason_code(event["reason_code"], event["state"]),
+                 "confirmed_until": event["state_start_time"]}
+        previous_state[line_id] = prior
+    write_interval(line_id, prior, event["event_time"], closed=False)
+
+
+def write_interval(line_id, state, end_time, closed):
+    start = parse_ts(state["start_time"])
+    end = parse_ts(end_time)
+    confirmed = parse_ts(state["confirmed_until"])
+    if state["state"] == "RUN":
+        _inc(total_run_minutes, line_id, max(0, (end - confirmed).total_seconds()) / 60)
+    state["confirmed_until"] = end_time
+    interval_id = document_id(line_id, state["start_time"], state["state"])
+    duration = (end - start).total_seconds()
+    interval = {"event_id": interval_id, "line_id": line_id, "state": state["state"],
+                "start_time": state["start_time"], "end_time": end_time,
+                "confirmed_until": end_time, "closed": closed,
+                "duration_seconds": duration, "duration_minutes": duration / 60,
+                "reason_code": state["reason_code"]}
+    append(interval, "state_intervals")
+    for segment in hourly(state["start_time"], end_time):
+        segment.update(event_id=document_id(interval_id, segment["hour"]),
+                       line_id=line_id, state=state["state"], reason_code=state["reason_code"])
+        append(segment, "state_hours")
+
+
+def check_stale(now_dt=None):
+    now_dt = now_dt or datetime.now(timezone.utc)
+    for line_id, timestamp in list(last_seen.items()):
+        diff = (now_dt - parse_ts(timestamp)).total_seconds()
+        if diff >= 30:
+            state = previous_state[line_id]
+            upsert({"line_id": line_id, "state": "STALE", "last_known_state": state["state"],
+                    "event_time": now_dt.isoformat().replace('+00:00', 'Z'),
+                    "state_start_time": state["start_time"], "last_heartbeat": timestamp,
+                    "time_in_state": (parse_ts(timestamp) - parse_ts(state["start_time"])).total_seconds()},
+                   "line_status")
+
 
 def handle_production(event):
     line_id = event["line_id"]
-    _inc(total_good_units, line_id, event["good_count_inc"])
-    _inc(total_cycles, line_id)
-
     append(event, "production_events")
+    save_unit(requests, event, produced=True)
+    if event["cycles_count_inc"]:
+        cycle = {"event_id": document_id(line_id, event["cycle_id"]),
+                 "line_id": line_id, "event_time": event["event_time"],
+                 "cycles_count_inc": event["cycles_count_inc"]}
+        response = requests.put(f"http://localhost:9200/cycle_events/_doc/{cycle['event_id']}?refresh=wait_for",
+                                json=cycle, timeout=10)
+        response.raise_for_status()
+    update_production_summary(line_id)
+    response = requests.post("http://localhost:9200/cycle_events/_search", json={
+        "size": 0, "query": {"term": {"line_id": line_id}},
+        "aggs": {"cycles": {"sum": {"field": "cycles_count_inc"}}}}, timeout=10)
+    if response.status_code == 404:
+        total_cycles[line_id] = 0
+    else:
+        response.raise_for_status()
+        total_cycles[line_id] = response.json()["aggregations"]["cycles"]["value"]
     upsert({
         "line_id": line_id,
         "total_good_units": total_good_units[line_id],
@@ -181,28 +216,17 @@ def handle_production(event):
             "last_updated": get_now_iso(),
         }, "cycles_summary")
 
+def update_production_summary(line_id):
+    summary = counts(requests, line_id)
+    total_good_units[line_id] = summary["total_good_units"]
+    upsert(dict(summary, line_id=line_id, last_updated=get_now_iso()), "reject_summary")
+    upsert(dict(summary, line_id=line_id, last_updated=get_now_iso()), "production_summary")
+
+
 def handle_reject(event):
-    line_id = event["line_id"]
-    _inc(total_rejects, line_id)
-
-    good = total_good_units.get(line_id, 0)
-    rejects = total_rejects[line_id]
-    total = good + rejects
-    reject_rate = round(rejects / total * 100, 1) if total > 0 else 0
-
-    # Rejections tracking by batch
-    lot_id = event.get("material_lot_id", "UNKNOWN_LOT")
-    _inc(rejects_by_lot, lot_id)
-    print(f"Lot {lot_id}: {rejects_by_lot[lot_id]} rejects")
-    
     append(event, "reject_events")
-    upsert({
-        "line_id": line_id,
-        "total_rejects": rejects,
-        "total_good_units": good,
-        "reject_rate": reject_rate,
-        "last_updated": get_now_iso(),
-    }, "reject_summary")
+    save_unit(requests, event, produced=False)
+    update_production_summary(event["line_id"])
 
 def handle_qc(event):
     global fully_inspected_count
@@ -291,14 +315,14 @@ def process_message(message):
 
 def install_mappings():
     properties = {key: {"type": "keyword"} for key in (
-        "event_id", "event_type", "line_id", "unit_id", "batch_id",
+        "event_id", "event_type", "line_id", "unit_id", "batch_id", "cycle_id", "last_known_state",
         "material_lot_id", "station_id", "state", "reason_code", "reject_reason",
         "inspection_type", "result", "action")}
     properties.update({key: {"type": "date", "format": "strict_date_optional_time"}
                        for key in ("event_time", "state_start_time", "start_time",
-                                   "end_time", "last_updated", "rejected_at")})
+                                   "end_time", "last_updated", "rejected_at", "hour", "confirmed_until", "last_heartbeat")})
     response = requests.put("http://localhost:9200/_index_template/coffee_events", json={
-        "index_patterns": ["line_status", "*_events", "*_summary", "state_intervals", "dead_letter_queue"],
+        "index_patterns": ["capsule_units", "line_status", "*_events", "*_summary", "state_intervals", "state_hours", "dead_letter_queue"],
         "template": {"mappings": {"properties": properties}}}, timeout=10)
     response.raise_for_status()
 
@@ -306,16 +330,21 @@ def install_mappings():
 def main():
     install_mappings()
     consumer = KafkaConsumer("line_events", bootstrap_servers="localhost:9092",
-                             auto_offset_reset="latest", consumer_timeout_ms=1000)
-    while True:
-        for message in consumer:
-            process_message(message)
-        now_dt = datetime.now(timezone.utc)
-        for line_id, ts_str in last_seen.items():
-            diff = (now_dt - parse_ts(ts_str)).total_seconds()
-            if diff > 30:
-                upsert({"line_id": line_id, "state": "STALE", "event_time": get_now_iso(),
-                        "state_start_time": ts_str, "time_in_state": diff}, "line_status")
+                             auto_offset_reset="latest")
+    next_check = time.monotonic()
+    try:
+        while True:
+            for messages in consumer.poll(timeout_ms=1000, max_records=100).values():
+                for message in messages:
+                    process_message(message)
+                    if time.monotonic() >= next_check:
+                        check_stale()
+                        next_check = time.monotonic() + 1
+            if time.monotonic() >= next_check:
+                check_stale()
+                next_check = time.monotonic() + 1
+    finally:
+        consumer.close()
 
 
 if __name__ == "__main__":
