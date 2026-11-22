@@ -1,6 +1,7 @@
 from kafka import KafkaConsumer
 import requests, json, time, uuid
 from datetime import datetime, timezone
+from event_contract import validate_event
 
 # Config
 with open("config/reason_codes.json") as f:
@@ -32,15 +33,6 @@ def parse_ts(ts):
 def get_now_iso():
     return datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z')
 
-# Kafka
-consumer = KafkaConsumer(
-    "line_events",
-    bootstrap_servers="localhost:9092",
-    value_deserializer=lambda m: json.loads(m.decode("utf-8")),
-    auto_offset_reset="latest",
-    consumer_timeout_ms=30000,
-)
-
 # OpenSearch utils
 def upsert(event, index_name):
     doc_id = event["line_id"]
@@ -55,11 +47,9 @@ def upsert(event, index_name):
 def append(event, index_name):
     doc_id = event["event_id"]
     url = f"http://localhost:9200/{index_name}/_doc/{doc_id}"
-    try:
-        r = requests.put(url, json=event)
-        print(r.json())
-    except Exception:
-        pass
+    response = requests.put(url, json=event, timeout=10)
+    response.raise_for_status()
+    print(response.json())
 
 def send_to_dlq(event, reason):
     event["rejection_reason"] = reason
@@ -268,37 +258,65 @@ HANDLERS = {
     "station_state": handle_station_state
 }
 
-# Main loop
-while True:
-    for message in consumer:
-        event = message.value
-        event_id = event.get("event_id")
+def process_message(message):
+    try:
+        event = validate_event(json.loads(message.value.decode("utf-8")))
+        if event["event_id"] in seen_ids:
+            return
+        if event["event_type"] == "line_state":
+            valid, reason = validate(event)
+            if not valid:
+                raise ValueError(reason)
+    except (ValueError, UnicodeError) as exc:
+        coordinates = {"topic": message.topic, "partition": message.partition,
+                       "offset": message.offset}
+        doc_id = f"{message.topic}:{message.partition}:{message.offset}"
+        try:
+            original = json.loads(message.value.decode("utf-8"))
+        except (ValueError, UnicodeError):
+            original = None
+        if isinstance(original, dict) and isinstance(original.get("event_id"), str) and original["event_id"]:
+            doc_id = original["event_id"]
+        append({"event_id": doc_id, "raw_message": message.value.decode("utf-8", errors="replace"),
+                "kafka": coordinates, "rejection_reason": str(exc),
+                "rejected_at": get_now_iso()}, "dead_letter_queue")
+        return
+    if event["event_id"] in seen_ids:
+        return
+    HANDLERS[event["event_type"]](event)
+    seen_ids.add(event["event_id"])
+    if len(seen_ids) > 10000:
+        seen_ids.clear()
 
-        # Dedup
-        if event_id in seen_ids:
-            continue
-        seen_ids.add(event_id)
-        if len(seen_ids) > 10000:
-            seen_ids.clear()
 
-        # Routing
-        event_type = event.get("event_type", "unknown")
-        handler = HANDLERS.get(event_type)
-        if handler:
-            handler(event)
-        else:
-            print(f"Unknown event_type: {event_type}")
+def install_mappings():
+    properties = {key: {"type": "keyword"} for key in (
+        "event_id", "event_type", "line_id", "unit_id", "batch_id",
+        "material_lot_id", "station_id", "state", "reason_code", "reject_reason",
+        "inspection_type", "result", "action")}
+    properties.update({key: {"type": "date", "format": "strict_date_optional_time"}
+                       for key in ("event_time", "state_start_time", "start_time",
+                                   "end_time", "last_updated", "rejected_at")})
+    response = requests.put("http://localhost:9200/_index_template/coffee_events", json={
+        "index_patterns": ["line_status", "*_events", "*_summary", "state_intervals", "dead_letter_queue"],
+        "template": {"mappings": {"properties": properties}}}, timeout=10)
+    response.raise_for_status()
 
-    # Stale detection
-    now_dt = datetime.now(timezone.utc)
-    for line_id, ts_str in last_seen.items():
-        ts_dt = parse_ts(ts_str)
-        diff = (now_dt - ts_dt).total_seconds()
-        if diff > 30:
-            upsert({
-                "line_id": line_id,
-                "state": "STALE",
-                "event_time": get_now_iso(),
-                "state_start_time": ts_str,
-                "time_in_state": diff,
-            }, "line_status")
+
+def main():
+    install_mappings()
+    consumer = KafkaConsumer("line_events", bootstrap_servers="localhost:9092",
+                             auto_offset_reset="latest", consumer_timeout_ms=1000)
+    while True:
+        for message in consumer:
+            process_message(message)
+        now_dt = datetime.now(timezone.utc)
+        for line_id, ts_str in last_seen.items():
+            diff = (now_dt - parse_ts(ts_str)).total_seconds()
+            if diff > 30:
+                upsert({"line_id": line_id, "state": "STALE", "event_time": get_now_iso(),
+                        "state_start_time": ts_str, "time_in_state": diff}, "line_status")
+
+
+if __name__ == "__main__":
+    main()
