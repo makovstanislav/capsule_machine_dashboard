@@ -218,3 +218,5 @@ One document per station action. Append.
 | action | string | ENTER / EXIT |
 | event_time | date (UTC ISO 8601) | |
 See [counts and states](counts_and_states.md) for persisted capsule outcomes, hourly downtime, range queries and checks.
+
+Reject codes and stations are normalized against their config dictionaries; missing or unknown values use `UNKNOWN_REASON` and `UNKNOWN_STATION`. Failed production includes `reject_station_id`. Capsule outcomes retain the earliest failure (event time, then event ID) as the primary reason/station pair. See [reject breakdowns](rejects.md).

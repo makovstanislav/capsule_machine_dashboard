@@ -25,7 +25,9 @@ class TestClient:
                 kwargs['json'] = body
         else:
             path[1] = self.prefix + path[1]
-        return requests.request(method, urlunsplit(parts._replace(path='/'.join(path))), **kwargs)
+        parts = parts._replace(path='/'.join(path))
+        target = os.environ.get('TEST_OPENSEARCH_URL', 'http://localhost:9200')
+        return requests.request(method, target + parts.path + ('?' + parts.query if parts.query else ''), **kwargs)
 
     def post(self, url, **kwargs):
         return self.request('POST', url, **kwargs)
@@ -50,8 +52,8 @@ class OpenSearchTest(unittest.TestCase):
     def tearDown(self):
         self.quiet.stop()
         self.mock.stop()
-        requests.delete(f'http://localhost:9200/{self.client.prefix}*', timeout=10).raise_for_status()
-        requests.delete(f'http://localhost:9200/_index_template/{self.client.prefix}coffee_events', timeout=10).raise_for_status()
+        requests.delete(os.environ.get('TEST_OPENSEARCH_URL', 'http://localhost:9200') + f'/{self.client.prefix}*', timeout=10).raise_for_status()
+        requests.delete(os.environ.get('TEST_OPENSEARCH_URL', 'http://localhost:9200') + f'/_index_template/{self.client.prefix}coffee_events', timeout=10).raise_for_status()
 
     def production(self, number, result='PASS', line='A', time='09:00'):
         return dict(event_id=f'{line}:{number}', event_type='production', line_id=line,
@@ -113,3 +115,66 @@ class OpenSearchTest(unittest.TestCase):
         clipped = self.client.post('http://localhost:9200/state_hours/_search', json=body, timeout=10)
         clipped.raise_for_status()
         self.assertEqual(sum(bucket['minutes']['value'] for bucket in clipped.json()['aggregations']['hours']['buckets']), 10)
+
+    def test_reject_breakdowns_reconcile_and_survive_replay(self):
+        from rejects import distribution
+        for number in range(5):
+            consumer.handle_production(self.production(number))
+        events = []
+        for number, reason, station in [(0, 'UNDERFILL', 'SEALER'), (1, 'UNDERFILL', 'SEALER'),
+                                        (2, 'SEAL_DEFECT', 'FILLER'), (3, 'new-code', 'no-station')]:
+            event = dict(self.production(number), event_type='reject', result='FAIL',
+                         event_id=f'reject-{number}', event_time='2026-01-01T09:01:00Z',
+                         reject_reason=reason, station_id=station)
+            consumer.handle_reject(event)
+            events.append(event)
+        result = distribution(self.client, 'A')
+        self.assertEqual(result['total_rejects'], counts(self.client, 'A')['total_rejects'])
+        self.assertEqual([row['doc_count'] for row in result['reasons']], [2, 1, 1])
+        self.assertEqual(result['reasons'][-1]['cumulative_pct'], 100)
+        self.assertEqual(sum(row['doc_count'] for row in result['stations']), 4)
+        self.assertEqual({row['key']: row['doc_count'] for row in result['stations']},
+                         {'SEALER': 2, 'FILLER': 1, 'UNKNOWN_STATION': 1})
+        # A later defect must not replace the primary pair, even when replayed first.
+        later = dict(events[0], event_id='later', event_time='2026-01-01T09:02:00Z',
+                     reject_reason='CAPSULE_CRACK', station_id='PACKER')
+        consumer.handle_reject(later)
+        for event in reversed(events):
+            consumer.handle_reject(event)
+        consumer.total_good_units.clear()
+        consumer.handle_production(self.production(0))
+        self.assertEqual(distribution(self.client, 'A'), result)
+        self.assertEqual(distribution(self.client, 'B')['total_rejects'], 0)
+        self.assertEqual(distribution(self.client, 'A', start='2026-01-01T09:01:00Z')['total_rejects'], 0)
+        # An earlier failure delivered last becomes the primary reason and station together.
+        earlier = dict(later, event_id='earlier', event_time='2026-01-01T09:00:30Z')
+        consumer.handle_reject(earlier)
+        consumer.handle_reject(events[0])
+        changed = distribution(self.client, 'A')
+        self.assertIn({'key': 'PACKER', 'doc_count': 1}, changed['stations'])
+        self.assertEqual(changed['total_rejects'], 4)
+        # Range end is exclusive.
+        self.assertEqual(distribution(self.client, 'A', end='2026-01-01T09:00:00Z')['total_rejects'], 0)
+
+    def test_station_acceptance_and_visualization_queries(self):
+        import json
+        from pathlib import Path
+        from rejects import distribution
+        for number, station in enumerate(['SEALER', 'SEALER', None]):
+            event = dict(self.production(number, 'FAIL'), reject_station_id=station)
+            consumer.handle_production(event)
+        result = distribution(self.client, 'A')
+        self.assertEqual(result['stations'], [{'key': 'SEALER', 'doc_count': 2},
+                                             {'key': 'UNKNOWN_STATION', 'doc_count': 1}])
+        for field in ['reasons', 'stations']:
+            spec = json.loads(Path(f'docs/visualizations/reject_{field}.json').read_text())
+            body = spec['data']['url']['body']
+            body['query']['bool']['must'] = []
+            body['query']['bool']['must_not'] = []
+            body['query']['bool']['filter'].remove('%dashboard_context-filter_clause%')
+            body = json.loads(json.dumps(body).replace('{"%timefilter%": "min"}', '"2026-01-01T09:00:00Z"')
+                              .replace('{"%timefilter%": "max"}', '"2026-01-01T09:01:00Z"'))
+            response = self.client.post('http://localhost:9200/capsule_units/_search', json=body, timeout=10)
+            response.raise_for_status()
+            buckets = response.json()['aggregations'][field]['buckets']
+            self.assertEqual(sum(row['doc_count'] for row in buckets), result['total_rejects'])

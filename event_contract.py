@@ -1,6 +1,7 @@
 """Validation and timestamp normalization for Kafka input events."""
 from datetime import datetime, timezone
 import math
+from rejects import normalize
 
 REQUIRED = {
     'line_state': ('state', 'state_start_time', 'reason_code'),
@@ -34,7 +35,7 @@ def timestamp(value):
 def validate_event(event):
     if not isinstance(event, dict):
         raise ValueError('event must be a JSON object')
-    event = event.copy()
+    event = normalize(event)
     kind = event.get('event_type')
     if not isinstance(kind, str) or kind not in REQUIRED:
         raise ValueError('unknown event_type')

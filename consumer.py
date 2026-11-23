@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 from event_contract import validate_event
 from production import counts, save_unit, document_id
 from intervals import hourly
+from rejects import normalize
 
 # Config
 with open("config/reason_codes.json") as f:
@@ -158,6 +159,7 @@ def check_stale(now_dt=None):
 
 
 def handle_production(event):
+    event = normalize(event)
     line_id = event["line_id"]
     append(event, "production_events")
     save_unit(requests, event, produced=True)
@@ -224,6 +226,7 @@ def update_production_summary(line_id):
 
 
 def handle_reject(event):
+    event = normalize(event)
     append(event, "reject_events")
     save_unit(requests, event, produced=False)
     update_production_summary(event["line_id"])
@@ -317,7 +320,7 @@ def install_mappings():
     properties = {key: {"type": "keyword"} for key in (
         "event_id", "event_type", "line_id", "unit_id", "batch_id", "cycle_id", "last_known_state",
         "material_lot_id", "station_id", "state", "reason_code", "reject_reason",
-        "inspection_type", "result", "action")}
+        "inspection_type", "result", "action", "reject_station_id", "reject_key")}
     properties.update({key: {"type": "date", "format": "strict_date_optional_time"}
                        for key in ("event_time", "state_start_time", "start_time",
                                    "end_time", "last_updated", "rejected_at", "hour", "confirmed_until", "last_heartbeat")})
@@ -325,6 +328,10 @@ def install_mappings():
         "index_patterns": ["capsule_units", "line_status", "*_events", "*_summary", "state_intervals", "state_hours", "dead_letter_queue"],
         "template": {"mappings": {"properties": properties}}}, timeout=10)
     response.raise_for_status()
+    response = requests.put("http://localhost:9200/capsule_units/_mapping", json={
+        "properties": {name: {"type": "keyword"} for name in ("reject_station_id", "reject_key")}}, timeout=10)
+    if response.status_code != 404:
+        response.raise_for_status()
 
 
 def main():

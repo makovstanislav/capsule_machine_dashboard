@@ -27,3 +27,4 @@ class ProducerTest(unittest.TestCase):
                   and e['unit_id'] == reject['unit_id'] and e['result'] == 'FAIL']
             self.assertEqual(len(qc), 1)
             self.assertEqual(qc[0]['station_id'], reject['station_id'])
+            self.assertEqual(production['reject_station_id'], reject['station_id'])

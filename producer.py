@@ -74,7 +74,8 @@ def generate_cycle(new_units):
         event.update(fields, station_id="PACKER", cycle_id=cycle_id,
                      good_count_inc=0 if reason else 1,
                      cycles_count_inc=1 if number == unit_counter - new_units else 0,
-                     result="FAIL" if reason else "PASS", reject_reason=reason)
+                     result="FAIL" if reason else "PASS", reject_reason=reason,
+                     reject_station_id=failed_station)
         send(event)
         for inspection_type, station in [("CHECKWEIGHER", "WEIGHER"), ("VISION", "SEALER")]:
             event = base_event("qc_inspection")

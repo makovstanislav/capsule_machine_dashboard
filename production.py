@@ -1,5 +1,7 @@
 """Persist capsule outcomes and calculate counts for a line and time range."""
 import hashlib
+from datetime import datetime, timezone
+from rejects import normalize
 
 
 def document_id(*parts):
@@ -33,24 +35,37 @@ def counts(client, line_id, start=None, end=None):
 
 
 def save_unit(client, event, produced):
+    event = normalize(event)
     unit = {key: event[key] for key in ('line_id', 'unit_id', 'batch_id', 'material_lot_id')}
     unit.update(event_time=event['event_time'], produced=produced,
-                result=event.get('result', 'FAIL'), reject_reason=event.get('reject_reason'))
+                result=event.get('result', 'FAIL') if produced else 'FAIL', reject_reason=event.get('reject_reason'),
+                reject_station_id=event.get('reject_station_id', event.get('station_id')))
+    if unit['result'] == 'FAIL':
+        failure_time = datetime.fromisoformat(event['event_time'].replace('Z', '+00:00'))
+        unit['reject_key'] = failure_time.astimezone(timezone.utc).isoformat(timespec='microseconds') + ':' + event['event_id']
     # Production owns the identity and release time. A reject can only make FAIL sticky.
-    script = '''
-        if (params.unit.produced) {
-            boolean failed = ctx._source.result == 'FAIL';
-            def reason = ctx._source.reject_reason;
-            ctx._source.putAll(params.unit);
-            if (failed) {
-                ctx._source.result = 'FAIL';
-                ctx._source.reject_reason = reason;
-            }
-        } else {
-            ctx._source.result = 'FAIL';
-            ctx._source.reject_reason = params.unit.reject_reason;
+    script = """
+        boolean failed = ctx._source.result == 'FAIL';
+        def key = ctx._source.reject_key;
+        def reason = ctx._source.reject_reason;
+        def station = ctx._source.reject_station_id;
+        if (params.unit.result == 'FAIL' &&
+            (!failed || key == null || params.unit.reject_key.compareTo(key) < 0)) {
+            failed = true;
+            key = params.unit.reject_key;
+            reason = params.unit.reject_reason;
+            station = params.unit.reject_station_id;
         }
-    '''
+        if (params.unit.produced) {
+            ctx._source.putAll(params.unit);
+        }
+        if (failed) {
+            ctx._source.result = 'FAIL';
+            ctx._source.reject_key = key;
+            ctx._source.reject_reason = reason;
+            ctx._source.reject_station_id = station;
+        }
+    """
     doc_id = document_id(event['line_id'], event['unit_id'])
     response = client.post(f'http://localhost:9200/capsule_units/_update/{doc_id}?refresh=wait_for',
                            json={'script': {'source': script, 'params': {'unit': unit}},

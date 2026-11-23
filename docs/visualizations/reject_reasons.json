@@ -1,0 +1,193 @@
+{
+  "$schema": "https://vega.github.io/schema/vega-lite/v5.json",
+  "title": "Reject reasons",
+  "data": {
+    "url": {
+      "index": "capsule_units",
+      "body": {
+        "size": 0,
+        "track_total_hits": true,
+        "query": {
+          "bool": {
+            "filter": [
+              {
+                "term": {
+                  "produced": true
+                }
+              },
+              {
+                "term": {
+                  "result": "FAIL"
+                }
+              },
+              "%dashboard_context-filter_clause%",
+              {
+                "range": {
+                  "event_time": {
+                    "gte": {
+                      "%timefilter%": "min"
+                    },
+                    "lt": {
+                      "%timefilter%": "max"
+                    }
+                  }
+                }
+              }
+            ],
+            "must": [
+              "%dashboard_context-must_clause%"
+            ],
+            "must_not": [
+              "%dashboard_context-must_not_clause%"
+            ]
+          }
+        },
+        "aggs": {
+          "reasons": {
+            "terms": {
+              "field": "reject_reason",
+              "missing": "UNKNOWN_REASON",
+              "size": 6,
+              "order": [
+                {
+                  "_count": "desc"
+                },
+                {
+                  "_key": "asc"
+                }
+              ]
+            }
+          },
+          "stations": {
+            "terms": {
+              "field": "reject_station_id",
+              "missing": "UNKNOWN_STATION",
+              "size": 5,
+              "order": [
+                {
+                  "_count": "desc"
+                },
+                {
+                  "_key": "asc"
+                }
+              ]
+            }
+          }
+        }
+      }
+    },
+    "format": {
+      "property": "aggregations.reasons.buckets"
+    }
+  },
+  "encoding": {
+    "x": {
+      "field": "key",
+      "type": "nominal",
+      "sort": null,
+      "title": null,
+      "axis": {
+        "labelAngle": -35,
+        "labelLimit": 180
+      }
+    }
+  },
+  "transform": [
+    {
+      "window": [
+        {
+          "op": "sum",
+          "field": "doc_count",
+          "as": "cumulative"
+        }
+      ],
+      "sort": [
+        {
+          "field": "doc_count",
+          "order": "descending"
+        },
+        {
+          "field": "key",
+          "order": "ascending"
+        }
+      ],
+      "frame": [
+        null,
+        0
+      ]
+    },
+    {
+      "joinaggregate": [
+        {
+          "op": "sum",
+          "field": "doc_count",
+          "as": "total"
+        }
+      ]
+    },
+    {
+      "calculate": "100 * datum.cumulative / datum.total",
+      "as": "cumulative_pct"
+    }
+  ],
+  "layer": [
+    {
+      "mark": "bar",
+      "encoding": {
+        "y": {
+          "field": "doc_count",
+          "type": "quantitative",
+          "title": "Rejected capsules"
+        },
+        "tooltip": [
+          {
+            "field": "key",
+            "title": "Code"
+          },
+          {
+            "field": "doc_count",
+            "title": "Capsules"
+          }
+        ]
+      }
+    },
+    {
+      "mark": {
+        "type": "line",
+        "point": true,
+        "color": "#d55e00"
+      },
+      "encoding": {
+        "y": {
+          "field": "cumulative_pct",
+          "type": "quantitative",
+          "title": "Cumulative %",
+          "scale": {
+            "domain": [
+              0,
+              100
+            ]
+          }
+        },
+        "tooltip": [
+          {
+            "field": "key",
+            "title": "Reason"
+          },
+          {
+            "field": "cumulative_pct",
+            "title": "Cumulative %",
+            "format": ".1f"
+          }
+        ]
+      }
+    }
+  ],
+  "resolve": {
+    "scale": {
+      "y": "independent"
+    }
+  },
+  "width": 420,
+  "height": 220
+}
